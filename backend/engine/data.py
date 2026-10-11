@@ -15,6 +15,7 @@ import io
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +36,10 @@ INTERVALS = ["1m", "5m", "15m", "30m", "60m", "1h", "1d", "1wk", "1mo"]
 # Yahoo's look-back limits for intraday data (calendar days).
 INTRADAY_LIMIT_DAYS = {"1m": 7, "5m": 59, "15m": 59, "30m": 59, "60m": 729, "1h": 729}
 CACHE_TTL_SECONDS = 6 * 3600
+# Hard ceiling for one symbol's download, including retries. When Yahoo rejects the session it can
+# otherwise stall for minutes inside yfinance (30 s crumb timeouts, retried).
+DOWNLOAD_BUDGET_SECONDS = 25.0
+_YAHOO_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="yahoo")
 
 
 class DataError(Exception):
@@ -55,6 +60,38 @@ _ALIASES = {
 }
 
 
+_DMY = re.compile(r"^\s*(\d{1,2})[/\-. ](\d{1,2})[/\-. ](\d{2,4})")
+
+
+def _parse_dates(col: pd.Series) -> pd.Series:
+    """Parse a date column, working out day-first (DD-MM-YYYY, common in India/Europe) vs month-first.
+
+    A part above 12 settles it; if every date is ambiguous, the order that gives a sorted series wins.
+    """
+    num = pd.to_numeric(col, errors="coerce")
+    if num.notna().mean() > 0.9 and num.median() > 1e8:
+        # Unix timestamps: seconds, milliseconds or microseconds since 1970.
+        med = num.median()
+        unit = "us" if med > 1e14 else "ms" if med > 1e11 else "s"
+        return pd.to_datetime(num, unit=unit, errors="coerce")
+    text = col.astype(str)
+    parts = text.str.extract(_DMY)
+    if parts.notna().all(axis=1).mean() < 0.5:  # ISO, epoch or textual dates: no ambiguity
+        return pd.to_datetime(col, errors="coerce", format="mixed")
+    a, b = pd.to_numeric(parts[0], errors="coerce"), pd.to_numeric(parts[1], errors="coerce")
+    if (a > 12).any() and not (b > 12).any():
+        dayfirst = True
+    elif (b > 12).any() and not (a > 12).any():
+        dayfirst = False
+    else:
+        tries = {df: pd.to_datetime(col, errors="coerce", format="mixed", dayfirst=df) for df in (False, True)}
+        # Most rows in time order wins; on a tie, the tighter (more regular) spacing wins.
+        score = {df: ((v.diff().dt.total_seconds() > 0).sum() - v.isna().sum() * 10, -v.diff().dt.total_seconds().abs().median())
+                 for df, v in tries.items()}
+        return tries[score[True] > score[False]]
+    return pd.to_datetime(col, errors="coerce", format="mixed", dayfirst=dayfirst)
+
+
 def normalize_ohlcv(df: pd.DataFrame, use_adjusted: bool = False) -> pd.DataFrame:
     if df is None or df.empty:
         raise DataError("No rows in dataset")
@@ -73,7 +110,7 @@ def normalize_ohlcv(df: pd.DataFrame, use_adjusted: bool = False) -> pd.DataFram
         dcol = find("date")
         if dcol is None:
             dcol = df.columns[0]
-        idx = pd.to_datetime(df[dcol], errors="coerce", utc=False, format="mixed", dayfirst=False)
+        idx = _parse_dates(df[dcol])
         if idx.isna().mean() > 0.5:  # maybe epoch seconds / ms
             num = pd.to_numeric(df[dcol], errors="coerce")
             unit = "ms" if num.median() > 1e11 else "s"
@@ -138,10 +175,39 @@ def load_yahoo(symbol: str, start: str | None, end: str | None, interval: str = 
             df = None
         elif not df.empty and not fresh and end is None:
             df = None  # stale cache and caller wants the latest bars
+    stale = False
     if df is None or refresh:
-        df = _download_yahoo(symbol, interval, adjusted)
-        df.to_csv(path)
-    return _slice(df, start, end)
+        try:
+            df = _download_yahoo(symbol, interval, adjusted)
+            df.to_csv(path)
+        except DataError:
+            if not path.exists():
+                raise
+            # Yahoo is unreachable or rejecting us right now: keep working from the last good copy.
+            df = pd.read_csv(path, index_col=0, parse_dates=True)
+            stale = True
+    out = _slice(df, start, end)
+    if stale:
+        out.attrs["stale_until"] = df.index[-1].date().isoformat()
+    return out
+
+
+def _reset_yahoo_session():
+    """Drop yfinance's cached cookie/crumb and open a new HTTP session.
+
+    yfinance keeps one session per process; in a long-running server Yahoo
+    eventually rejects its cookie and every download comes back empty
+    ("possibly delisted"). A fresh session fixes that without a restart.
+    """
+    try:
+        from yfinance import data as yfd
+        yd = yfd.YfData()
+        with yd._cookie_lock:
+            yd._cookie = None
+            yd._crumb = None
+            yd._session = yfd.new_session()
+    except Exception:  # internals changed in a future yfinance: retrying still helps
+        pass
 
 
 def _download_yahoo(symbol: str, interval: str, adjusted: bool) -> pd.DataFrame:
@@ -155,9 +221,22 @@ def _download_yahoo(symbol: str, interval: str, adjusted: bool) -> pd.DataFrame:
     else:
         kwargs["period"] = "max"
     last_err = None
+    deadline = time.monotonic() + DOWNLOAD_BUDGET_SECONDS
     for attempt in range(3):
+        if attempt:
+            _reset_yahoo_session()
+            time.sleep(0.5 * attempt)
+        remaining = deadline - time.monotonic()
+        if remaining <= 1:
+            break
         try:
-            raw = yf.Ticker(symbol).history(**kwargs)
+            fut = _YAHOO_POOL.submit(lambda t=min(10.0, remaining): yf.Ticker(symbol).history(timeout=t, **kwargs))
+            try:
+                raw = fut.result(timeout=remaining)
+            except FuturesTimeout:
+                last_err = DataError(f"Yahoo Finance did not respond in time for '{symbol}'. "
+                                     "It may be rate-limiting this computer; try again in a minute.")
+                break
             if raw is not None and len(raw) >= 2:
                 return normalize_ohlcv(raw, use_adjusted=adjusted)
             if raw is not None and len(raw) == 1:
@@ -168,7 +247,6 @@ def _download_yahoo(symbol: str, interval: str, adjusted: bool) -> pd.DataFrame:
             raise  # definitive answer from the provider, retrying won't help
         except Exception as e:  # network / rate-limit
             last_err = DataError(f"Download failed for '{symbol}': {e}")
-        time.sleep(1.0 + attempt)
     raise last_err
 
 

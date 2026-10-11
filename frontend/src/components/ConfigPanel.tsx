@@ -5,7 +5,11 @@ import { isoDay, money } from "../format";
 import { activeRules, DEFAULT_RULES, useApp } from "../store";
 import { Field, NumberInput, Section, Seg, Select, Toggle } from "./ui";
 
-export function ConfigPanel({ footer, hideParams = false }: { footer?: React.ReactNode; hideParams?: boolean }) {
+export function ConfigPanel({ footer, hideParams = false, title = "Backtest settings", strategySection }: {
+  footer?: React.ReactNode; hideParams?: boolean; title?: string;
+  /** Replaces the single-strategy picker (used by Compare, which picks several). */
+  strategySection?: React.ReactNode;
+}) {
   const { config: c, setConfig, meta, strategies } = useApp();
   const set = (patch: Partial<BacktestRequest>) => setConfig((x) => ({ ...x, ...patch }));
   const market = meta?.markets.find((m) => m.code === c.market);
@@ -36,6 +40,8 @@ export function ConfigPanel({ footer, hideParams = false }: { footer?: React.Rea
 
   return (
     <div className="card">
+      <div className="panel-title">{title}<span className="muted">{c.symbols.length} symbol{c.symbols.length === 1 ? "" : "s"} · {c.interval}</span></div>
+      {strategySection}
       <Section title="Data"
         summary={`${c.source === "yahoo" ? c.market : c.source === "csv" ? "CSV" : "Synthetic"} · ${c.symbols.join(", ")}`}>
         <Seg full value={c.source} onChange={(v) => set({ source: v, symbols: v === "csv" ? [] : c.symbols.length ? c.symbols : ["RELIANCE"], market: v === "csv" ? "CUSTOM" : c.market === "CUSTOM" ? "NSE" : c.market })}
@@ -96,7 +102,7 @@ export function ConfigPanel({ footer, hideParams = false }: { footer?: React.Rea
         {c.source === "yahoo" && <Toggle checked={c.adjusted} onChange={(v) => set({ adjusted: v })} label="Adjust for splits & dividends" />}
       </Section>
 
-      <Section title="Strategy" summary={strat?.name}>
+      {!strategySection && <Section title="Strategy" summary={strat?.name}>
         <Select value={c.strategy.id} onChange={(id) => set({ strategy: { id, params: {} } })}>
           {Object.entries(grouped).map(([cat, list]) => (
             <optgroup key={cat} label={cat}>
@@ -106,14 +112,14 @@ export function ConfigPanel({ footer, hideParams = false }: { footer?: React.Rea
         </Select>
         {strat && <div className="strategy-desc">{strat.description}</div>}
         {strat?.long_only && c.rules?.direction === "short" && (
-          <div className="alert warn" style={{ padding: "9px 11px", fontSize: 12.5 }}>
+          <div className="alert warn" style={{ padding: "9px 11px", fontSize: 14.5 }}>
             This strategy only buys, so it can't trade while Trading rules are set to Short only.
           </div>
         )}
         {strat && !hideParams && Object.keys(strat.params).length > 0 && (
           <ParamForm strat={strat} values={c.strategy.params} onChange={(params) => set({ strategy: { ...c.strategy, params } })} />
         )}
-      </Section>
+      </Section>}
 
       <Section title="Capital & costs" defaultOpen={false}
         summary={`${money(c.capital, market?.currency || "USD", true)} · ${costKind}`}>
@@ -151,7 +157,9 @@ export function ConfigPanel({ footer, hideParams = false }: { footer?: React.Rea
       </Section>
 
       <Section title="Sizing & risk" defaultOpen={false}
-        summary={`${c.sizing.mode} ${c.sizing.value}`}>
+        summary={[`${c.sizing.mode} ${c.sizing.value}`, c.stops.stop_loss_pct ? `SL ${c.stops.stop_loss_pct}%` : "",
+          c.stops.take_profit_pct ? `TP ${c.stops.take_profit_pct}%` : "", c.stops.trailing_pct ? `Trail ${c.stops.trailing_pct}%` : ""]
+          .filter(Boolean).join(" · ")}>
         <div className="grid2">
           <Field label="Position sizing">
             <Select value={c.sizing.mode} onChange={(mode) => set({ sizing: { mode, value: mode === "percent" ? 100 : mode === "risk" ? 1 : mode === "fixed_qty" ? 10 : 10000 } })}>
@@ -188,9 +196,9 @@ export function ConfigPanel({ footer, hideParams = false }: { footer?: React.Rea
         </div>
       </Section>
       <RulesSection rules={c.rules || DEFAULT_RULES} currency={market?.currency || "USD"} intraday={!["1d", "1wk", "1mo"].includes(c.interval)}
-        strategyLongOnly={!!strat?.long_only}
+        strategyLongOnly={!strategySection && !!strat?.long_only}
         onChange={(rules) => set({ rules, allow_short: rules.direction !== "long" })} />
-      {footer && <div style={{ padding: "16px 20px 20px", borderTop: "1px solid var(--border)" }}>{footer}</div>}
+      {footer && <div className="panel-footer">{footer}</div>}
     </div>
   );
 }

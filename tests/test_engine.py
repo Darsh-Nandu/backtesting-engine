@@ -211,3 +211,69 @@ def test_multi_asset_union_calendar():
     assert len(res["index"]) == len(a.index.union(b.index))
     assert {f["symbol"] for f in res["fills"]} == {"A", "B"}
     assert math.isfinite(res["equity"].iloc[-1])
+
+
+def test_yahoo_outage_falls_back_to_stale_cache(tmp_path, monkeypatch):
+    import os
+    from backend.engine import data as datamod
+    monkeypatch.setattr(datamod, "CACHE_DIR", tmp_path)
+    cached = load_synthetic("STALE", "2018-01-01", "2020-12-31")
+    path = datamod._cache_path("STALE.NS", "1d", True)
+    cached.to_csv(path)
+    old = path.stat().st_mtime - 2 * datamod.CACHE_TTL_SECONDS
+    os.utime(path, (old, old))                       # cache has expired
+
+    def down(*a, **k):
+        raise datamod.DataError("Yahoo Finance returned no data for 'STALE.NS'.")
+    monkeypatch.setattr(datamod, "_download_yahoo", down)
+    df = datamod.load_yahoo("STALE.NS", "2019-01-01", None)
+    assert len(df) > 400 and df.attrs["stale_until"] == "2020-12-31"
+
+    path.unlink()                                    # no cache at all: the error still surfaces
+    with pytest.raises(datamod.DataError):
+        datamod.load_yahoo("STALE.NS", "2019-01-01", None)
+
+
+def test_yahoo_session_reset_is_safe():
+    from backend.engine.data import _reset_yahoo_session
+    _reset_yahoo_session()
+    _reset_yahoo_session()
+
+
+def test_buy_and_hold_ignores_default_stops_but_others_use_them():
+    df = load_synthetic("BHSTOP", "2015-01-01", "2022-12-31")
+    cfg = lambda: EngineConfig(**ZERO, stop_loss_pct=10, take_profit_pct=25, max_bars_in_trade=20)
+    bh = Backtester({"X": df}, BuyAndHold, {}, cfg()).run()
+    assert len(bh["trades"]) == 1 and bh["trades"][0]["exit_reason"] == "end_of_data"
+    expected = 100_000 * df["close"].iloc[-1] / df["open"].iloc[1]
+    assert bh["equity"].iloc[-1] == pytest.approx(expected, rel=1e-9)
+    sma = Backtester({"X": df}, LIBRARY["SmaCross"], {}, cfg()).run()
+    assert {"stop_loss", "take_profit", "time_exit"} & {t["exit_reason"] for t in sma["trades"]}
+
+
+def test_explicit_stop_still_applies_without_default_exits():
+    class OwnStop(Strategy):
+        uses_default_exits = False
+        def next(self):
+            if self.bar == 0:
+                self.buy(sl=95)
+    df = frame([100, 100, 99, 90, 90], opens=[100, 100, 100, 98, 90], lows=[100, 99, 98, 89, 90])
+    res = Backtester({"X": df}, OwnStop, {}, EngineConfig(**ZERO, stop_loss_pct=50)).run()
+    assert res["trades"][0]["exit_reason"] == "stop_loss" and res["trades"][0]["exit_price"] == 95
+
+
+def test_yahoo_download_has_a_time_budget(monkeypatch, tmp_path):
+    import sys, time as _t, types
+    from backend.engine import data as datamod
+
+    class SlowTicker:
+        def __init__(self, sym): pass
+        def history(self, **kw):
+            _t.sleep(5)          # simulates yfinance stuck on a rejected session
+    monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(Ticker=SlowTicker))
+    monkeypatch.setattr(datamod, "DOWNLOAD_BUDGET_SECONDS", 1.5)
+    monkeypatch.setattr(datamod, "CACHE_DIR", tmp_path)
+    t0 = _t.monotonic()
+    with pytest.raises(datamod.DataError, match="did not respond in time"):
+        datamod.load_yahoo("SLOW.NS", "2020-01-01", None)
+    assert _t.monotonic() - t0 < 3

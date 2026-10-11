@@ -67,7 +67,7 @@ export function HistoryPage() {
                 <td>
                   <div style={{ fontWeight: 600, cursor: "text" }} title="Double-click to rename"
                     onDoubleClick={async () => { const n = prompt("Rename run", r.name); if (n) { await api.patchRun(r.id, { name: n }); refresh(); } }}>{r.name}</div>
-                  <div className="muted" style={{ fontSize: 11.5 }}>{r.name !== r.strategy ? `${r.strategy} · ` : ""}{relTime(r.created)}</div>
+                  <div className="muted" style={{ fontSize: 13.5 }}>{r.name !== r.strategy ? `${r.strategy} · ` : ""}{relTime(r.created)}</div>
                 </td>
                 <td style={{ whiteSpace: "normal", minWidth: 160 }}><span className="pill accent">{r.market}</span> <span className="dim">{r.symbols.slice(0, 3).join(", ")}{r.symbols.length > 3 ? ` +${r.symbols.length - 3}` : ""}</span></td>
                 <td className="dim">{s.period?.[0] ? `${date(s.period[0])} → ${date(s.period[1])}` : "-"}</td>
@@ -96,7 +96,7 @@ function Compare({ runs, onClose }: { runs: BacktestResult[]; onClose: () => voi
   const p = usePalette();
   const option = useMemo<EChartsOption>(() => ({
     ...baseOption(p),
-    legend: { top: 0, left: 0, textStyle: { color: p.text2, fontSize: 11.5 }, itemWidth: 14, itemHeight: 3, icon: "rect" },
+    legend: { top: 0, left: 0, textStyle: { color: p.text2, fontSize: 13.5 }, itemWidth: 14, itemHeight: 3, icon: "rect" },
     grid: { left: 52, right: 16, top: 34, bottom: 30 },
     tooltip: { ...(baseOption(p).tooltip as any), formatter: (items: any) =>
       `<b>${date(items[0].value[0] / 1000)}</b>` + items.map((it: any) => tooltipRow(it.color, it.seriesName, num(it.value[1], 1))).join("") },

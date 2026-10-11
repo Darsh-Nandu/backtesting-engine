@@ -115,7 +115,7 @@ export function DataPage() {
           <thead><tr><th>Code</th><th>Exchange</th><th>Country</th><th>Currency</th><th>Ticker format</th><th>Benchmark</th><th>Default costs</th></tr></thead>
           <tbody>{meta?.markets.map((m) => (
             <tr key={m.code}><td><b>{m.code}</b></td><td>{m.name}</td><td className="dim">{m.country}</td><td>{m.currency}</td>
-              <td className="mono" style={{ fontSize: 11.5 }}>{m.popular[0] ? `${m.popular[0]} → ${m.popular[0]}${m.suffix}` : "-"}</td>
+              <td className="mono" style={{ fontSize: 13.5 }}>{m.popular[0] ? `${m.popular[0]} → ${m.popular[0]}${m.suffix}` : "-"}</td>
               <td>{m.benchmark || "-"}</td><td className="dim">{m.cost_model}</td></tr>
           ))}</tbody>
         </table>
@@ -131,7 +131,7 @@ function MiniCandles({ d }: { d: any }) {
     if (!el.current) return;
     const chart = createChart(el.current, {
       autoSize: true,
-      layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: p.muted, fontSize: 11, fontFamily: "IBM Plex Sans, system-ui, sans-serif", attributionLogo: false },
+      layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: p.muted, fontSize: 13, fontFamily: "Figtree Variable, Figtree, system-ui, sans-serif", attributionLogo: false },
       grid: { vertLines: { color: p.grid }, horzLines: { color: p.grid } },
       rightPriceScale: { borderColor: p.grid }, timeScale: { borderColor: p.grid, minBarSpacing: 0.05 },
     });

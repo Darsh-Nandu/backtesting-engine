@@ -1,47 +1,64 @@
-import { useMemo, useState } from "react";
-import { AlertTriangle, Download, Sparkles } from "lucide-react";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, ChevronDown, Download, FileJson, LayoutDashboard, PanelLeftClose, PanelLeftOpen, Play, Sparkles, Table2 } from "lucide-react";
+import type { EChartsOption } from "echarts";
 import { BacktestResult, Trade } from "../api";
 import { date, downloadCSV, downloadJSON, isNum, label, money, num, pct, tone } from "../format";
 import { usePalette } from "../store";
+import { availablePeriods, engineStats, Period, periodStart, sliceResult, WindowStats, windowStats } from "../window";
+import { downloadDashboard } from "../exportDashboard";
 import {
   EquityChart, Histogram, LineChart, MonteCarloFan, MonthlyHeatmap, PnlBars, ReturnsHistogram, TradeScatter,
   YearlyBars,
 } from "./charts";
+import { baseOption, EChart } from "./EChart";
 import { PriceChart } from "./PriceChart";
-import { Card, Seg, Tabs, Toggle } from "./ui";
+import { Card, Seg, Spinner, Tabs, Toggle } from "./ui";
 
 type Tab = "overview" | "price" | "trades" | "analytics" | "montecarlo" | "details";
 
-export function Results({ res }: { res: BacktestResult }) {
+export interface ResultsChrome {
+  settingsOpen: boolean;
+  onToggleSettings: () => void;
+  onRun: () => void;
+  running: boolean;
+}
+
+export function Results({ res, chrome }: { res: BacktestResult; chrome?: ResultsChrome }) {
   const [tab, setTab] = useState<Tab>("overview");
   const [focusTrade, setFocusTrade] = useState<Trade | null>(null);
   const [symbol, setSymbol] = useState(Object.keys(res.symbols)[0]);
+  const [period, setPeriod] = useState<Period>("ALL");
   const sym = res.symbols[symbol] ? symbol : Object.keys(res.symbols)[0];
+
+  // One filter drives everything below it: KPIs, charts and tables are all computed for the window.
+  const view = useMemo(() => sliceResult(res, periodStart(res, period)), [res, period]);
+  const stats = useMemo(() => (period === "ALL" ? engineStats(res) : windowStats(view)), [res, view, period]);
 
   const openTrade = (t: Trade) => { setSymbol(t.symbol); setFocusTrade(t); setTab("price"); };
 
   return (
     <div>
-      <Header res={res} />
+      <Header res={res} period={period} setPeriod={setPeriod} chrome={chrome} />
       {res.warnings.length > 0 && (
-        <div className="alert warn" style={{ marginBottom: 16 }}><AlertTriangle size={16} style={{ flex: "none", marginTop: 2 }} />
+        <div className="alert warn" style={{ marginBottom: 16 }}><AlertTriangle size={17} style={{ flex: "none", marginTop: 2 }} />
           <div>{res.warnings.map((w, i) => <div key={i}>{w}</div>)}</div></div>
       )}
-      <Kpis res={res} />
+      <KpiCards res={res} s={stats} period={period} />
+      <StatStrip res={res} s={stats} />
       <Tabs value={tab} onChange={setTab} tabs={[
         { id: "overview", label: "Overview" },
         { id: "price", label: "Chart" },
-        { id: "trades", label: "Trades", count: res.trades.length },
+        { id: "trades", label: "Trades", count: view.trades.length },
         { id: "analytics", label: "Analysis" },
         { id: "montecarlo", label: "Monte Carlo" },
         { id: "details", label: "Details" },
       ]} />
-      {tab === "overview" && <Overview res={res} />}
+      {tab === "overview" && <Overview res={view} onAllTrades={() => setTab("trades")} onTrade={openTrade} />}
       {tab === "price" && (
         <PriceTab res={res} symbol={sym} setSymbol={(s) => { setSymbol(s); setFocusTrade(null); }} focusTrade={focusTrade} onTrade={setFocusTrade} />
       )}
-      {tab === "trades" && <TradesTab res={res} onOpen={openTrade} />}
-      {tab === "analytics" && <Analytics res={res} />}
+      {tab === "trades" && <TradesTab res={view} onOpen={openTrade} />}
+      {tab === "analytics" && <Analytics res={view} />}
       {tab === "montecarlo" && <MonteCarloTab res={res} />}
       {tab === "details" && <><MetricsTab res={res} /><div className="mt" /><LogsTab res={res} /></>}
     </div>
@@ -49,119 +66,196 @@ export function Results({ res }: { res: BacktestResult }) {
 }
 
 /* ------------------------------------------------------------------ */
-function Header({ res }: { res: BacktestResult }) {
+const PERIOD_LABEL: Record<Period, string> = { YTD: "YTD", "1Y": "1Y", "3Y": "3Y", "5Y": "5Y", ALL: "All" };
+
+function Header({ res, period, setPeriod, chrome }: { res: BacktestResult; period: Period; setPeriod: (p: Period) => void; chrome?: ResultsChrome }) {
   const m = res.metrics;
   const syms = Object.keys(res.symbols);
-  const params = Object.entries(res.strategy.params).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(", ");
-  const symText = syms.length > 4 ? `${syms.slice(0, 3).join(", ")} +${syms.length - 3} more` : syms.join(", ");
+  const st = res.request.stops || ({} as any);
+  const rules = [...(res.rules_active || []),
+    st.stop_loss_pct ? `Stop-loss ${st.stop_loss_pct}%` : "", st.take_profit_pct ? `Take-profit ${st.take_profit_pct}%` : "",
+    st.trailing_pct ? `Trailing ${st.trailing_pct}%` : "", st.max_bars ? `Exit after ${st.max_bars} bars` : ""].filter(Boolean);
+  const params = Object.entries(res.strategy.params).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(" · ");
   return (
     <div className="result-head">
-      <div style={{ minWidth: 0 }}>
-        <div className="result-title">{res.name && res.name !== res.strategy.name ? res.name : res.strategy.name}</div>
-        <div className="result-meta">
-          {res.market.code} · {symText} · {date(m.start)} - {date(m.end)} · {res.request.interval}{params && ` · ${params}`}
+      <div className="rh-main">
+        <div className="rh-title-row">
+          <div className="result-title">{res.name && res.name !== res.strategy.name ? res.name : res.strategy.name}</div>
+          <span className="tag accent">{res.market.code}</span>
+          {syms.slice(0, 4).map((s) => <span key={s} className="tag">{s.replace(/\.(NS|BO)$/, "")}</span>)}
+          {syms.length > 4 && <span className="tag">+{syms.length - 4}</span>}
         </div>
-        {res.rules_active?.length > 0 && (
-          <div className="result-meta" style={{ marginTop: 2 }}>Rules: {res.rules_active.join(" · ")}</div>
-        )}
+        <div className="result-meta">
+          {date(m.start)} - {date(m.end)} · {res.request.interval}{params && ` · ${params}`}{rules.length > 0 && ` · ${rules.join(" · ")}`}
+        </div>
       </div>
       <div className="result-actions">
-        <button className="btn btn-sm btn-ghost" title="Download the full result as JSON" onClick={() => downloadJSON(`backtest_${res.id}.json`, res)}><Download size={14} />JSON</button>
-        <button className="btn btn-sm btn-ghost" title="Download the equity curve as CSV" onClick={() => downloadCSV(`equity_${res.id}.csv`, res.series.t.map((t, i) => ({
-          date: new Date(t * 1000).toISOString(), equity: res.series.equity[i], benchmark: res.series.benchmark?.[i] ?? "",
-          drawdown_pct: res.series.drawdown[i], exposure_pct: res.series.exposure[i] })))}><Download size={14} />CSV</button>
+        <div className="rh-filter" title="Period: recomputes KPIs, charts and tables for the selected window">
+          <span className="rh-filter-label">Period</span>
+          <Seg value={period} onChange={setPeriod} options={availablePeriods(res).map((p) => ({ value: p, label: PERIOD_LABEL[p] }))} />
+        </div>
+        {chrome && (
+          <>
+            <button className="btn" onClick={chrome.onToggleSettings} title={chrome.settingsOpen ? "Hide settings for a wider view" : "Show settings"}>
+              {chrome.settingsOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}{chrome.settingsOpen ? "Hide settings" : "Settings"}
+            </button>
+            {!chrome.settingsOpen && (
+              <button className="btn btn-primary" onClick={chrome.onRun} disabled={chrome.running} title="Run again (Ctrl + Enter)">
+                {chrome.running ? <Spinner /> : <Play size={15} fill="currentColor" />}Run
+              </button>
+            )}
+          </>
+        )}
+        <ExportMenu res={res} />
       </div>
     </div>
   );
 }
 
-function Kpis({ res }: { res: BacktestResult }) {
-  const m = res.metrics;
+function ExportMenu({ res }: { res: BacktestResult }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+  const item = (icon: ReactNode, title: string, sub: string, fn: () => void) => (
+    <button className="menu-item" onClick={() => { fn(); setOpen(false); }}>{icon}<span><b>{title}</b><small>{sub}</small></span></button>
+  );
+  return (
+    <div className="menu" ref={ref}>
+      <button className="btn" onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open}><Download size={17} />Export<ChevronDown size={15} /></button>
+      {open && (
+        <div className="menu-pop" role="menu">
+          {item(<LayoutDashboard size={18} />, "Dashboard (HTML)", "Self-contained, shareable report", () => downloadDashboard(res))}
+          {item(<Table2 size={18} />, "Equity curve (CSV)", "Daily equity, benchmark, drawdown", () => downloadCSV(`equity_${res.id}.csv`, res.series.t.map((t, i) => ({
+            date: new Date(t * 1000).toISOString(), equity: res.series.equity[i], benchmark: res.series.benchmark?.[i] ?? "",
+            drawdown_pct: res.series.drawdown[i], exposure_pct: res.series.exposure[i] }))))}
+          {item(<FileJson size={18} />, "Full result (JSON)", "Every metric, trade and series", () => downloadJSON(`backtest_${res.id}.json`, res))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KpiCards({ res, s, period }: { res: BacktestResult; s: WindowStats; period: Period }) {
   const cur = res.currency;
-  // Colour is reserved for the two headline return figures; everything else stays neutral.
-  const items = [
-    { label: "Total return", value: pct(m.total_return_pct), cls: tone(m.total_return_pct),
-      sub: isNum(m.benchmark_return_pct) ? `Benchmark ${pct(m.benchmark_return_pct, 1)}` : money(m.net_profit, cur, true) },
-    { label: "CAGR", value: pct(m.cagr_pct), cls: tone(m.cagr_pct),
-      sub: isNum(m.benchmark_cagr_pct) ? `Benchmark ${pct(m.benchmark_cagr_pct, 1)}` : `${num(m.years, 1)} years` },
-    { label: "Sharpe ratio", value: num(m.sharpe), sub: `Sortino ${num(m.sortino)}` },
-    { label: "Max drawdown", value: pct(m.max_drawdown_pct), sub: `${num(m.max_dd_duration_days, 0)} days to recover` },
-    { label: "Win rate", value: m.trades ? pct(m.win_rate_pct, 1, false) : "-", sub: `${m.trades} trades` },
-    { label: "Profit factor", value: num(m.profit_factor), sub: `Payoff ${num(m.payoff_ratio)}` },
+  const excess = isNum(s.totalReturn) && isNum(s.benchReturn) ? s.totalReturn - s.benchReturn : null;
+  const scope = period === "ALL" ? "full period" : PERIOD_LABEL[period];
+  const cards = [
+    { label: "Total return", value: pct(s.totalReturn), cls: tone(s.totalReturn),
+      delta: excess, deltaText: excess == null ? null : `${pct(excess, 1)} vs ${res.benchmark_name || "benchmark"}`,
+      sub: `${money(s.netProfit, cur, true)} net profit · ${scope}` },
+    { label: "CAGR", value: pct(s.cagr), cls: tone(s.cagr),
+      delta: isNum(s.cagr) && isNum(s.benchCagr) ? s.cagr - s.benchCagr : null,
+      deltaText: isNum(s.cagr) && isNum(s.benchCagr) ? `${pct(s.cagr - s.benchCagr, 1)} vs benchmark` : null,
+      sub: `${num(s.years, 1)} years compounded` },
+    { label: "Sharpe ratio", value: num(s.sharpe), cls: "", delta: null, deltaText: null,
+      sub: `Sortino ${num(s.sortino)} · volatility ${pct(s.volatility, 1, false)}` },
+    { label: "Max drawdown", value: pct(s.maxDrawdown), cls: "", delta: null, deltaText: null,
+      sub: `Longest recovery ${num(s.ddDays, 0)} days` },
   ];
   return (
-    <div className="kpis">
-      {items.map((k) => (
+    <div className="kpis kpi-cards">
+      {cards.map((k) => (
         <div key={k.label} className="kpi">
           <div className="kpi-label">{k.label}</div>
-          <div className={`kpi-value num ${k.cls || ""}`}>{k.value}</div>
-          <div className="kpi-sub">{k.sub}</div>
+          <div className={`kpi-value num ${k.cls}`}>{k.value}</div>
+          <div className="kpi-foot">
+            {k.deltaText && <span className={`delta ${tone(k.delta)}`}>{(k.delta ?? 0) >= 0 ? "▲" : "▼"} {k.deltaText}</span>}
+            <span className="kpi-sub">{k.sub}</span>
+          </div>
         </div>
       ))}
     </div>
   );
 }
 
+function StatStrip({ res, s }: { res: BacktestResult; s: WindowStats }) {
+  const items: [string, string][] = [
+    ["Win rate", s.trades ? pct(s.winRate, 1, false) : "-"], ["Profit factor", num(s.profitFactor)], ["Trades", num(s.trades, 0)],
+    ["Avg trade", pct(s.avgTrade)], ["Payoff", num(s.payoff)], ["Exposure", pct(s.exposure, 0, false)], ["Fees", money(s.fees, res.currency, true)],
+  ];
+  return (
+    <div className="stat-strip">
+      {items.map(([k, v]) => <div key={k} className="stat"><span className="stat-k">{k}</span><span className="stat-v num">{v}</span></div>)}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
-function Overview({ res }: { res: BacktestResult }) {
+function Overview({ res, onAllTrades, onTrade }: { res: BacktestResult; onAllTrades: () => void; onTrade: (t: Trade) => void }) {
   const [log, setLog] = useState(false);
   const p = usePalette();
   const hasB = !!res.series.benchmark;
+  const recent = useMemo(() => [...res.trades].sort((a, b) => b.exit_time - a.exit_time).slice(0, 8), [res.trades]);
+  // Fit the primary chart to the screen: short laptop screens get a shorter chart instead of a scroll.
+  const chartH = typeof window !== "undefined" && window.innerHeight < 960 ? 330 : 420;
   return (
     <>
-      <Card title="Equity curve" sub="Ctrl + scroll to zoom · drag to pan"
-        actions={<>
-          <div className="legend">
-            <span><i className="line" style={{ background: p.series[0] }} />Strategy</span>
-            {hasB && <span><i className="dash" style={{ color: p.bench }} />{res.benchmark_name}</span>}
-            <span><i style={{ background: p.neg + "55" }} />Drawdown</span>
-          </div>
-          <Seg value={log ? "log" : "lin"} onChange={(v) => setLog(v === "log")} options={[{ value: "lin", label: "Linear" }, { value: "log", label: "Log" }]} />
-        </>}>
-        <EquityChart res={res} log={log} />
-      </Card>
-      <Card className="mt" title="Monthly returns" sub="Percent per month · yearly total on the right">
-        <MonthlyHeatmap res={res} />
-      </Card>
-      <Card className="mt" title="Key statistics">
-        <div className="metric-cols">
-          {res.request.rules?.square_off ? (
-            <div>
-              <div className="metric-group-title">Trading days</div>
-              <MetricList res={res} keys={["final_equity", "net_profit", "trading_days", "profitable_days_pct", "best_day_pct", "worst_day_pct"]} />
+      <div className="ov-grid">
+        <Card title="Equity curve" sub="Ctrl + scroll to zoom"
+          actions={<>
+            <div className="legend">
+              <span><i className="line" style={{ background: p.series[0] }} />Strategy</span>
+              {hasB && <span><i className="dash" style={{ color: p.bench }} />{res.benchmark_name}</span>}
+              <span><i style={{ background: p.neg + "55" }} />Drawdown</span>
             </div>
-          ) : (
-            <div>
-              <div className="metric-group-title">Returns & risk</div>
-              <MetricList res={res} keys={["final_equity", "net_profit", "volatility_pct", "calmar", "var_95_pct", "exposure_pct"]} />
-            </div>
-          )}
-          <div>
-            <div className="metric-group-title">Trades</div>
-            <MetricList res={res} keys={["avg_trade_pct", "avg_win_pct", "avg_loss_pct", "best_trade_pct", "worst_trade_pct", "avg_bars_held"]} />
-          </div>
-          <div>
-            <div className="metric-group-title">{hasB ? `Versus ${res.benchmark_name}` : "Costs & shape"}</div>
-            <MetricList res={res} keys={hasB
-              ? ["alpha_pct", "beta", "correlation", "excess_return_pct", "total_fees", "fees_pct_of_capital"]
-              : ["total_fees", "fees_pct_of_capital", "omega", "skew", "kurtosis", "sqn"]} />
-          </div>
-        </div>
-      </Card>
-      {res.per_symbol.length > 1 && (
-        <Card className="mt" title="By symbol" bodyClass="table-wrap">
-          <table className="tbl">
-            <thead><tr><th>Symbol</th><th className="r">Trades</th><th className="r">Win rate</th><th className="r">Net P&L</th><th className="r">Profit factor</th><th className="r">Avg trade</th><th className="r">Buy & hold</th></tr></thead>
-            <tbody>{res.per_symbol.map((s) => (
-              <tr key={s.symbol}><td>{s.symbol}</td><td className="r">{s.trades}</td><td className="r">{pct(s.win_rate_pct, 1, false)}</td>
-                <td className={`r ${tone(s.net_pnl)}`}>{money(s.net_pnl, res.currency)}</td><td className="r">{num(s.profit_factor)}</td>
-                <td className="r">{pct(s.avg_trade_pct)}</td><td className="r">{pct(s.buy_hold_pct)}</td></tr>
-            ))}</tbody>
-          </table>
+            <Seg value={log ? "log" : "lin"} onChange={(v) => setLog(v === "log")} options={[{ value: "lin", label: "Linear" }, { value: "log", label: "Log" }]} />
+          </>}>
+          <EquityChart res={res} log={log} height={chartH} />
         </Card>
-      )}
+        <Card title="Annual returns" sub={hasB ? `vs ${res.benchmark_name}` : undefined}>
+          <YearlyBars res={res} height={chartH} />
+        </Card>
+      </div>
+      <div className="ov-grid mt">
+        <Card title="Monthly returns" sub="% per month · yearly total on the right">
+          <MonthlyHeatmap res={res} />
+        </Card>
+        <Card title="How trades ended" sub={`${res.trades.length} closed trades`}>
+          <ExitDonut res={res} />
+          <div className="mini-stats">
+            {res.per_symbol.length > 1 ? res.per_symbol.slice(0, 5).map((s) => (
+              <div key={s.symbol} className="metric-row"><span className="k">{s.symbol}</span>
+                <span className={`v ${tone(s.net_pnl)}`}>{money(s.net_pnl, res.currency, true)}</span></div>
+            )) : (
+              <>
+                <div className="metric-row"><span className="k">Best trade</span><span className="v">{pct(res.metrics.best_trade_pct)}</span></div>
+                <div className="metric-row"><span className="k">Worst trade</span><span className="v">{pct(res.metrics.worst_trade_pct)}</span></div>
+                <div className="metric-row"><span className="k">Avg bars held</span><span className="v">{num(res.metrics.avg_bars_held, 1)}</span></div>
+              </>
+            )}
+          </div>
+        </Card>
+      </div>
+      <Card className="mt" title="Recent trades" sub="Most recent exits in the selected period · click a row to see it on the chart"
+        actions={<button className="btn btn-sm" onClick={onAllTrades}>View all {res.trades.length} trades</button>} bodyClass="table-wrap">
+        <TradeTable trades={recent} currency={res.currency} onRow={onTrade} />
+      </Card>
     </>
   );
+}
+
+function ExitDonut({ res }: { res: BacktestResult }) {
+  const p = usePalette();
+  const option = useMemo<EChartsOption>(() => {
+    const counts: Record<string, number> = {};
+    res.trades.forEach((t) => (counts[t.exit_reason] = (counts[t.exit_reason] || 0) + 1));
+    const data = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 6)
+      .map(([k, v], i) => ({ name: label(k), value: v, itemStyle: { color: [p.series[0], p.series[1], p.series[2], p.series[6], p.series[4], p.bench][i] } }));
+    return {
+      ...baseOption(p),
+      tooltip: { ...(baseOption(p).tooltip as any), trigger: "item", formatter: (it: any) => `${it.name}<br/><b>${it.value}</b> trades (${it.percent}%)` },
+      legend: { orient: "vertical", right: 0, top: "middle", textStyle: { color: p.text2, fontSize: 13.5, fontWeight: 600 }, itemWidth: 10, itemHeight: 10, icon: "circle" },
+      series: [{ type: "pie", radius: ["58%", "82%"], center: ["32%", "50%"], avoidLabelOverlap: true, label: { show: false },
+        itemStyle: { borderColor: p.surface, borderWidth: 3 }, data }],
+    };
+  }, [res, p]);
+  if (!res.trades.length) return <div className="muted" style={{ padding: "40px 0", textAlign: "center" }}>No closed trades in this period</div>;
+  return <EChart option={option} height={200} />;
 }
 
 /* ------------------------------------------------------------------ */
@@ -215,7 +309,7 @@ function TradesTab({ res, onOpen }: { res: BacktestResult; onOpen: (t: Trade) =>
             {reasons.length === 0 && <span className="muted">No closed trades</span>}
             {reasons.map(([r, n], i) => (
               <div key={r}>
-                <div className="row" style={{ justifyContent: "space-between", fontSize: 12.5 }}>
+                <div className="row" style={{ justifyContent: "space-between", fontSize: 14.5 }}>
                   <span className="dim">{label(r)}</span><span className="num">{n} <span className="muted">· {num((n / total) * 100, 0)}%</span></span>
                 </div>
                 <div className="progress" style={{ marginTop: 6 }}><div style={{ width: `${(n / total) * 100}%` }} /></div>
@@ -269,7 +363,7 @@ function RuleActivity({ res }: { res: BacktestResult }) {
   return (
     <div style={{ marginTop: 22 }}>
       <div className="metric-group-title">Rule activity</div>
-      {ev.length === 0 ? <div className="muted" style={{ fontSize: 13 }}>No rule had to step in.</div> : ev.map(([k, n]) => (
+      {ev.length === 0 ? <div className="muted" style={{ fontSize: 15 }}>No rule had to step in.</div> : ev.map(([k, n]) => (
         <div key={k} className="metric-row"><span className="k">{RULE_EVENTS[k] || label(k)}</span><span className="v">{num(n, 0)}</span></div>
       ))}
     </div>
@@ -392,7 +486,7 @@ function MonteCarloTab({ res }: { res: BacktestResult }) {
     <>
       <div className="row" style={{ marginBottom: 14 }}>
         <Seg value={method} onChange={setMethod} options={[{ value: "returns", label: "Block bootstrap of returns" }, { value: "trades", label: "Resample trades" }]} />
-        <span className="muted" style={{ fontSize: 12 }}>
+        <span className="muted" style={{ fontSize: 14 }}>
           {mc.n_sims} simulations · {method === "returns" ? "20-bar blocks keep volatility clustering" : "trade order and frequency randomised"}
         </span>
       </div>

@@ -126,6 +126,9 @@ def load_frames(req: dict) -> tuple[dict[str, pd.DataFrame], list[str]]:
             sym, df = datamod.load(source, market.code, s, req.get("start"), req.get("end"),
                                    req.get("interval", "1d"), req.get("adjusted", True), req.get("refresh", False))
             frames[sym] = df
+            if df.attrs.get("stale_until"):
+                warnings.append(f"Yahoo Finance couldn't be reached, so {sym} uses cached prices up to "
+                                f"{df.attrs['stale_until']}. Run again later for the latest bars.")
         except datamod.DataError as e:
             warnings.append(str(e))
     if not frames:
@@ -175,8 +178,16 @@ def run_backtest(req: dict, include_mc: bool = True) -> dict:
                         "held overnight). Use 'Next bar open' fills to enter at the open and square off at the close.")
     if cfg.rules.square_off and req.get("interval", "1d") in ("1wk", "1mo"):
         warnings.append("Square-off works per trading day; on weekly/monthly bars it closes positions at every bar.")
+    if not getattr(cls, "uses_default_exits", True) and (cfg.stop_loss_pct or cfg.take_profit_pct or cfg.trailing_pct
+                                                           or cfg.max_bars_in_trade):
+        warnings.append(f"'{cls.name}' ignores the default stop-loss / take-profit / trailing / time exit from "
+                        "Sizing & risk, so it stays a true baseline.")
     res = run_core(frames, cls, params, cfg)
     bm_name, bm = load_benchmark(req, frames)
+    asked = (req.get("benchmark") or "auto").strip()
+    if asked.lower() not in ("auto", "none", "") and bm_name != asked:
+        warnings.append(f"Benchmark '{asked}' wasn't found on Yahoo Finance, so an equal-weight buy & hold of your "
+                        "symbols is used instead. Check the Benchmark field (e.g. ^NSEI, ^GSPC or 'auto').")
     return assemble(req, cls, params, cfg, res, bm_name, bm, market, warnings, include_mc)
 
 

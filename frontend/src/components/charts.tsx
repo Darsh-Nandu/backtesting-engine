@@ -24,7 +24,7 @@ export function EquityChart({ res, log = false, height = 440 }: { res: BacktestR
     const series: any[] = [
       {
         name: "Strategy", type: "line", data: pairs(s.t, s.equity), showSymbol: false, xAxisIndex: 0, yAxisIndex: 0,
-        lineStyle: { width: 2, color: p.series[0] }, itemStyle: { color: p.series[0] },
+        lineStyle: { width: 2.6, color: p.series[0] }, itemStyle: { color: p.series[0] },
         areaStyle: log ? undefined : {
           color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [
             { offset: 0, color: p.series[0] + "22" }, { offset: 1, color: p.series[0] + "00" }] },
@@ -35,13 +35,13 @@ export function EquityChart({ res, log = false, height = 440 }: { res: BacktestR
     if (s.benchmark) {
       series.push({
         name: res.benchmark_name || "Benchmark", type: "line", data: pairs(s.t, s.benchmark), showSymbol: false,
-        xAxisIndex: 0, yAxisIndex: 0, lineStyle: { width: 1.3, color: p.bench, type: [4, 4] },
+        xAxisIndex: 0, yAxisIndex: 0, lineStyle: { width: 1.8, color: p.bench, type: [5, 4] },
         itemStyle: { color: p.bench }, z: 2, sampling: "lttb",
       });
     }
     series.push({
       name: "Drawdown", type: "line", data: pairs(s.t, s.drawdown), showSymbol: false, xAxisIndex: 1, yAxisIndex: 1,
-      lineStyle: { width: 1, color: p.neg + "cc" }, itemStyle: { color: p.neg },
+      lineStyle: { width: 1.6, color: p.neg }, itemStyle: { color: p.neg },
       areaStyle: { color: p.neg + "26" }, sampling: "lttb",
     });
     return {
@@ -79,7 +79,7 @@ export function EquityChart({ res, log = false, height = 440 }: { res: BacktestR
           backgroundColor: "transparent", fillerColor: p.accent + "14", handleStyle: { color: p.surface, borderColor: p.axis },
           dataBackground: { lineStyle: { color: p.axis, opacity: 0.6 }, areaStyle: { color: p.grid, opacity: 0.5 } },
           selectedDataBackground: { lineStyle: { color: p.accent, opacity: 0.5 }, areaStyle: { color: p.accent, opacity: 0.08 } },
-          textStyle: { color: p.muted, fontSize: 10 }, moveHandleSize: 0 },
+          textStyle: { color: p.muted, fontSize: 12 }, moveHandleSize: 0 },
       ],
       series,
     };
@@ -107,7 +107,7 @@ export function Histogram({ counts, edges, height = 240, unit = "%", markers = [
         type: "bar", barWidth: "92%",
         data: centers.map((c, i) => ({ value: [c, counts[i]], itemStyle: { color: neutral ? p.series[0] + "b3" : (c >= 0 ? p.pos : p.neg) + "cc", borderRadius: [3, 3, 0, 0] } })),
         markLine: markers.length ? {
-          symbol: "none", silent: true, label: { color: p.text2, fontSize: 10, formatter: "{b}" },
+          symbol: "none", silent: true, label: { color: p.text2, fontSize: 12, formatter: "{b}" },
           lineStyle: { color: p.text2, type: "dashed" }, data: markers.map((m) => ({ xAxis: m.value, name: m.label })),
         } : undefined,
       }],
@@ -141,7 +141,7 @@ export function YearlyBars({ res, height = 260 }: { res: BacktestResult; height?
     const hasB = ys.some((y) => y.bench != null);
     return {
       ...baseOption(p),
-      legend: { show: hasB, top: 0, right: 0, textStyle: { color: p.text2, fontSize: 11 }, itemWidth: 10, itemHeight: 10 },
+      legend: { show: hasB, top: 0, right: 0, textStyle: { color: p.text2, fontSize: 13 }, itemWidth: 10, itemHeight: 10 },
       grid: { left: 48, right: 10, top: hasB ? 30 : 14, bottom: 26 },
       tooltip: { ...(baseOption(p).tooltip as any), axisPointer: { type: "shadow", shadowStyle: { color: p.grid + "80" } },
         valueFormatter: (v: any) => pct(v) },
@@ -176,7 +176,7 @@ export function LineChart({ t, values, name, color, height = 220, unit = "", ref
     yAxis: { type: "value", scale: true, ...axisStyle(p), axisLabel: { ...axisStyle(p).axisLabel, formatter: `{value}${unit}` } },
     series: [{
       name, type: "line", showSymbol: false, data: pairs(t, values), sampling: "lttb",
-      lineStyle: { width: 1.4, color }, itemStyle: { color },
+      lineStyle: { width: 2, color }, itemStyle: { color },
       areaStyle: area ? { color: color + "18" } : undefined,
       markLine: refLine != null ? { symbol: "none", silent: true, label: { show: false },
         lineStyle: { color: p.axis, type: "dashed" }, data: [{ yAxis: refLine }] } : undefined,
@@ -193,14 +193,14 @@ export function TradeScatter({ trades, height = 300, x = "bars_held" }: { trades
     const mk = (win: boolean) => trades.filter((t) => (t.pnl > 0) === win).map((t) => ({ value: [t[x], t.return_pct], t }));
     return {
       ...baseOption(p),
-      legend: { top: 0, right: 0, textStyle: { color: p.text2, fontSize: 11 }, itemWidth: 10, itemHeight: 10 },
+      legend: { top: 0, right: 0, textStyle: { color: p.text2, fontSize: 13 }, itemWidth: 10, itemHeight: 10 },
       grid: { left: 52, right: 14, top: 30, bottom: 40 },
       tooltip: { ...(baseOption(p).tooltip as any), trigger: "item", formatter: (it: any) => {
         const t: Trade = it.data.t;
         return `<b>#${t.id} ${t.symbol}</b> · ${t.side}<br/>${date(t.entry_time)} → ${date(t.exit_time)}<br/>` +
           `Return <b>${pct(t.return_pct)}</b> · ${t.bars_held} bars<br/>MAE ${pct(t.mae_pct)} · MFE ${pct(t.mfe_pct)}<br/><span style="opacity:.7">${t.exit_reason}</span>`;
       } },
-      xAxis: { type: "value", name: xl, nameLocation: "middle", nameGap: 26, nameTextStyle: { color: p.muted, fontSize: 11 }, ...axisStyle(p) },
+      xAxis: { type: "value", name: xl, nameLocation: "middle", nameGap: 26, nameTextStyle: { color: p.muted, fontSize: 13 }, ...axisStyle(p) },
       yAxis: { type: "value", ...axisStyle(p), axisLabel: { ...axisStyle(p).axisLabel, formatter: "{value}%" } },
       series: [
         { name: "Winners", type: "scatter", symbolSize: 8, data: mk(true), itemStyle: { color: p.pos, opacity: 0.85, borderColor: p.surface, borderWidth: 1 } },

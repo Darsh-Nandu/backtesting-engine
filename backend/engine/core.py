@@ -189,6 +189,7 @@ class Position:
     peak: float = 0.0             # best price since entry (for trailing / MFE)
     trough: float = 0.0           # worst price since entry (MAE)
     tag: str = ""
+    default_exits: bool = True    # whether the global default stops / time exit apply
 
 
 class Broker:
@@ -637,11 +638,13 @@ class Broker:
         sl = o.sl if o and o.sl is not None else None
         tp = o.tp if o and o.tp is not None else None
         trail = o.trail if o and o.trail is not None else None
-        if sl is None and cfg.stop_loss_pct > 0:
+        defaults = not (o is not None and o.owner is not None and not getattr(o.owner, "uses_default_exits", True))
+        pos.default_exits = defaults
+        if defaults and sl is None and cfg.stop_loss_pct > 0:
             sl = pos.avg_price * (1 - d * cfg.stop_loss_pct / 100)
-        if tp is None and cfg.take_profit_pct > 0:
+        if defaults and tp is None and cfg.take_profit_pct > 0:
             tp = pos.avg_price * (1 + d * cfg.take_profit_pct / 100)
-        if trail is None and cfg.trailing_pct > 0:
+        if defaults and trail is None and cfg.trailing_pct > 0:
             trail = cfg.trailing_pct
         if sl is not None:
             pos.sl = sl
@@ -676,7 +679,7 @@ class Broker:
                     exit_px, why = max(op, pos.tp), "take_profit"
                 elif not long and lo <= pos.tp:
                     exit_px, why = min(op, pos.tp), "take_profit"
-            if exit_px is None and cfg.max_bars_in_trade and i - pos.entry_bar >= cfg.max_bars_in_trade:
+            if exit_px is None and cfg.max_bars_in_trade and pos.default_exits and i - pos.entry_bar >= cfg.max_bars_in_trade:
                 exit_px, why = d["close"][i], "time_exit"
             # Update excursion trackers *after* the exit test (no look-ahead into the trail level).
             pos.peak = max(pos.peak, hi)

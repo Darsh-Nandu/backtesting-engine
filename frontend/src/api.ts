@@ -101,6 +101,24 @@ export interface BacktestResult {
   warnings: string[];
   elapsed_ms: number;
 }
+export interface CompareSpec { id: string; params: Record<string, any>; label?: string; code?: string }
+export interface CompareTrade {
+  symbol: string; side: "Long" | "Short"; entry_time: number; exit_time: number; pnl: number; return_pct: number;
+  fees: number; exit_reason: string; bars_held: number;
+}
+export interface CompareEntry {
+  label: string; id: string | null; error?: string; name?: string; category?: string; params?: Record<string, any>;
+  metrics: Record<string, any>; equity: number[]; exposure: number[] | null;
+  monthly: { year: number; month: number; ret: number }[]; yearly: { year: number; ret: number }[];
+  trades: CompareTrade[] | null; note?: string | null; is_blend?: boolean; elapsed_ms?: number;
+}
+export interface CompareResult {
+  id: string; created: string; request: BacktestRequest & { strategies: CompareSpec[] }; market: Market; currency: string;
+  t: number[]; benchmark: number[] | null; benchmark_name: string | null;
+  strategies: CompareEntry[]; blend: CompareEntry | null; warnings: string[];
+  config: { periods_per_year: number; cost_model: string; fill_on: string; initial_capital: number };
+  elapsed_ms: number;
+}
 export interface RunSummary {
   id: string; created: string; name: string; kind: string; strategy: string; market: string; symbols: string[];
   summary: Record<string, any>; starred: boolean;
@@ -147,6 +165,8 @@ export const api = {
   upload: (file: File) => { const fd = new FormData(); fd.append("file", file); return req<any>("/api/data/upload", { method: "POST", body: fd }); },
   deleteUpload: (name: string) => req("/api/data/uploads/" + encodeURIComponent(name), { method: "DELETE" }),
   backtest: (body: BacktestRequest) => req<BacktestResult>("/api/backtest", { method: "POST", body: JSON.stringify(body) }),
+  compare: (body: BacktestRequest, strategies: CompareSpec[]) =>
+    req<CompareResult>("/api/compare", { method: "POST", body: JSON.stringify({ ...body, strategies }) }),
   runs: () => req<RunSummary[]>("/api/runs"),
   run: (id: string) => req<BacktestResult>("/api/runs/" + id),
   patchRun: (id: string, body: { name?: string; starred?: boolean }) =>

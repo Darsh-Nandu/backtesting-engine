@@ -1,6 +1,6 @@
-# QuantForge - Multi-Market Backtesting Engine
+# QuantForge - Quant Strategy Research and Backtesting
 
-An event-driven backtesting engine with a web dashboard. You can test built-in strategies or your own Python code on **NSE, BSE, NASDAQ, NYSE, LSE, XETRA, Euronext, TSE, HKEX, TSX, ASX, crypto, forex and indices**, or on any OHLCV CSV file.
+A quant research workstation: a charting and analysis workspace for your own CSV data, plus an event-driven backtesting engine with a web dashboard. You can test built-in strategies or your own Python code on **NSE, BSE, NASDAQ, NYSE, LSE, XETRA, Euronext, TSE, HKEX, TSX, ASX, crypto, forex and indices**, or on any OHLCV CSV file.
 
 ![QuantForge dashboard](docs/dashboard.png)
 
@@ -22,7 +22,7 @@ uv run python run.py            # --port 8000  --rebuild  --no-browser  --reload
 
 Frontend development with hot reload: run `uv run python run.py --no-browser` and, in another terminal, `cd frontend && npm run dev` (http://localhost:5173 proxies `/api` to the backend).
 
-Run the tests with `uv run --group dev pytest` (engine, trading rules and error reporting).
+Run the tests with `uv run --group dev pytest` (engine, trading rules, strategy comparison, chart data and error reporting).
 
 The end-to-end UI suite drives the real dashboard in Firefox:
 
@@ -30,7 +30,7 @@ The end-to-end UI suite drives the real dashboard in Firefox:
 uv run --group e2e python e2e/run_e2e.py
 ```
 
-It runs 62 checks in about 10 minutes. It clicks every control, runs every built-in strategy and writes a new strategy in the Strategy Lab ([`e2e/strategies/squeeze_breakout.py`](e2e/strategies/squeeze_breakout.py)). It also optimises and walk-forward-tests that strategy, uploads a CSV, and covers the History and Data pages and phone width. It starts its own server on port 8765 with a throwaway data folder, so your history is untouched. The report and failure screenshots go to `e2e/output/`.
+It runs 85 checks in about 15 minutes. It clicks every control, runs every built-in strategy and writes a new strategy in the Strategy Lab ([`e2e/strategies/squeeze_breakout.py`](e2e/strategies/squeeze_breakout.py)). It also optimises and walk-forward-tests that strategy, uploads a CSV, and covers strategy comparison, both navigation sections, the colour palettes, the Analysis section (CSV upload, drawings, indicators, all chart types, replay, layouts and Quant analysis), the History and Data pages and phone width. It starts its own server on port 8765 with a throwaway data folder, so your history is untouched. The report and failure screenshots go to `e2e/output/`.
 
 ## Features
 
@@ -45,8 +45,55 @@ It runs 62 checks in about 10 minutes. It clicks every control, runs every built
 | **Strategies** | 16 built-ins: trend (SMA/EMA cross, MACD, Supertrend, ADX, time-series momentum), mean reversion (RSI, Bollinger, z-score, stochastic), breakout (Donchian/Turtle, Keltner), volatility targeting and portfolio rotation (cross-sectional momentum, equal-weight rebalance). |
 | **Strategy Lab** | Write strategies in Python in the browser with syntax highlighting, validation that points at the error line, save, fork a built-in, and run. |
 | **Analytics** | 50+ metrics: CAGR, Sharpe, Sortino, Calmar, Omega, max drawdown and its duration, Ulcer index, VaR/CVaR, alpha/beta, information ratio, profit factor, expectancy, SQN, Kelly, MAE/MFE and more. Equity vs benchmark, drawdown, monthly heatmap, annual bars, rolling Sharpe and volatility, return distribution, trade scatter, and candlestick charts with indicators and trade markers. |
+| **Compare strategies** | Pick 2-8 strategies (built-in or your own, or one strategy several times with different parameters) and run them on the same data, capital, costs and trading rules. Leader cards (highest return, best Sharpe, smallest drawdown), overlaid equity and drawdown curves, a risk vs return map, a return-correlation matrix, an **equal-weight blend** to show the diversification effect, a sortable ranking with the best value in each column highlighted, annual returns, a consistency table and the full metric grid. The period filter applies to all of it, and any row opens as a full backtest. |
 | **Robustness** | Grid or random **parameter optimisation** across all CPU cores with a heatmap; **walk-forward analysis** (rolling or anchored) with walk-forward efficiency; **Monte Carlo** (block bootstrap of returns and trade resampling). |
-| **Workflow** | Every run is saved: reopen, rename, star, or **compare** up to 8 runs. CSV/JSON export. Dark and light themes. Ctrl+Enter runs a backtest. |
+| **Dashboard** | KPI cards with benchmark deltas, a stat strip, and paired primary and secondary charts. A **period filter** (YTD / 1Y / 3Y / 5Y / All) recomputes every KPI, chart and table for the window. The settings panel collapses so results get the full width. |
+| **Sharing** | **Export → Dashboard (HTML)** writes a self-contained report (Chart.js, embedded data, period, symbol and side filters, sortable trade table, print styles) that anyone can open in a browser (example: [`docs/sample_dashboard.html`](docs/sample_dashboard.html)). CSV and JSON exports are also available. |
+| **Workflow** | Every run is saved: reopen, rename, star, or **compare** up to 8 runs. Light and dark modes with five colour palettes. Ctrl+Enter runs a backtest. |
+
+![Strategy comparison](docs/compare.png)
+
+## Navigation
+
+The app bar has two sections; hover one for a menu of its pages, or use the bar underneath. Each section remembers the page you were last on.
+
+| Section | Pages |
+|---|---|
+| **Analysis** | Chart · Quant analysis (your own CSV data) |
+| **Backtesting** | Backtest · Compare · Optimize · Walk-forward · Strategy Lab · History · Market data |
+
+### Appearance
+
+The palette button in the app bar opens the **Appearance** menu: light or dark mode, and five colour palettes, each with a light and a dark version. The palette recolours the whole app, including the charts. Up and down colours stay green and red in every palette. The sun/moon button next to it switches mode in one click. Your choice is remembered.
+
+| Palette | Look |
+|---|---|
+| **Cobalt** (default) | Navy and electric blue |
+| **Violet** | Deep indigo and iris |
+| **Ocean** | Petrol and cyan |
+| **Sunset** | Espresso and burnt orange |
+| **Graphite** | Neutral greys, monochrome |
+
+![Colour palettes: Cobalt, Violet, Ocean, Sunset, Graphite](docs/palettes.png)
+
+## Analysis: your own data
+
+The **Analysis** section works on **your uploaded CSV files only** (market data from Yahoo Finance is used by the Backtesting section, not here). Upload a file from the dataset picker or drop it onto the chart. It has two pages: **Chart**, a full charting terminal, and **Quant analysis**, a statistics dashboard.
+
+![Chart page](docs/analyze.png)
+
+| Area | What you get |
+|---|---|
+| **Data** | Any OHLCV CSV: columns and date formats are detected automatically, including day-first dates (DD-MM-YYYY) and Unix timestamps; only a date and a close/price column are required. A dataset opens at its own interval and can be resampled to any coarser one (5m, 15m, 30m, 1h, 4h, 1D, 1W, 1M), with intraday blocks aligned to the session open. Datasets panel to switch, upload or delete; compare datasets on one chart; range buttons, go to date and a timezone selector. |
+| **Chart** | Candles, hollow candles, bars, Heikin Ashi, line, step line, area, baseline and columns, plus price-based charts that ignore time: **Renko, Line break, Kagi, Point & figure and Range bars** (box size automatic from ATR or set by you). Regular, percent and log scales, magnet crosshair, PNG snapshot (drawings included) and fullscreen. |
+| **Indicators** | 29 built-ins computed in the browser: moving averages (SMA, EMA, WMA, Hull, MA cross), bands (Bollinger, Keltner, Donchian, pivot points), trend (Supertrend, Parabolic SAR, DMI/ADX), momentum (RSI, MACD, Stochastic, CCI, Williams %R, ROC), volatility (ATR, historical volatility, BandWidth), volume (Volume, OBV, VWAP, MFI, visible-range volume profile) and statistics (z-score, rolling return, linear regression). Editable inputs and colours, favourites and saved templates. They match the backend's tested indicator code to floating-point precision. |
+| **Drawing tools** | Trend line, ray, extended line, horizontal line and ray, vertical line, cross line, parallel channel, Fibonacci retracement and extension, XABCD, Elliott wave and triangle patterns, long and short positions (risk/reward plus whether the target or the stop was hit first), date and price range, brush, rectangle, ellipse, arrow, text, price label and icons; measure, zoom, eraser, magnet mode, lock, hide, undo and redo. Drawings are stored per dataset. |
+| **Workflow** | Bar replay with play, step and speed controls (indicators only see bars up to the replay point), saved layouts, dataset details with statistics for the visible range, a data window and an object tree. |
+| **Quant analysis** | For the open dataset, over 1Y to all history (or its intraday bars): total return, CAGR, volatility, Sharpe, Sortino, drawdown, Calmar, Ulcer, VaR/CVaR, skew, kurtosis, Hurst exponent and mean-reversion half-life. Charts: price with an underwater (drawdown) curve, return distribution against a normal curve, Q-Q plot, monthly-returns heatmap (weekday × hour for intraday data), average return by month, weekday and hour, rolling volatility / Sharpe / return / beta / correlation, autocorrelation with significance bands, volume profile, the largest drawdowns, and relative performance plus a correlation matrix against your other datasets (any of which can be the benchmark). Statistics export to CSV. |
+
+![Analysis view](docs/analysis.png)
+
+Keyboard: `/` indicators · `Alt+H` / `Alt+V` / `Alt+C` horizontal, vertical and cross line at the cursor · `Alt+T` trend line · `Alt+F` Fibonacci · `Alt+R` reset view · `Ctrl+Z` / `Ctrl+Y` undo and redo · `Ctrl+S` save layout · `Del` remove the selected drawing · `Shift+→` step the replay · `Esc` cancel.
 
 ## Trading rules
 
@@ -111,6 +158,8 @@ backend/
     metrics.py     performance & risk analytics
     montecarlo.py  bootstrap simulations
     optimize.py    grid/random search (multiprocess) + walk-forward
+    compare.py     several strategies on one dataset + equal-weight blend
+    charting.py    CSV datasets as chart bars, resampled to any interval
     library.py     built-in strategies
     sandbox.py     loader for user strategy code
     runner.py      request → data → backtest → JSON
@@ -118,6 +167,7 @@ backend/
     main.py        FastAPI REST API + static dashboard
     store.py       SQLite run history, saved strategies
 frontend/          React + TypeScript + Vite, ECharts, TradingView Lightweight Charts, CodeMirror
+  src/chart/       Analysis section: chart engine, drawing layer, indicators, quant analysis
 data_store/        cache, uploads, saved strategies, runs.db (created at runtime)
 ```
 

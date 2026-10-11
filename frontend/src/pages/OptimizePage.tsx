@@ -50,7 +50,7 @@ export function OptSettings({ ranges, setRanges, combos, objective, setObjective
           {method === "random" ? <Field label="Iterations"><NumberInput value={nIter} min={5} step={10} onChange={setNIter} /></Field>
             : <Field label="Combinations"><div className="input num" style={{ display: "flex", alignItems: "center", color: combos > 5000 ? "var(--neg-text)" : undefined }}>{num(combos, 0)}{combos > 5000 ? " (random 5k)" : ""}</div></Field>}
         </div>
-        <table className="tbl" style={{ fontSize: 12, tableLayout: "fixed" }}>
+        <table className="tbl" style={{ fontSize: 14, tableLayout: "fixed" }}>
           <thead><tr><th style={{ width: 26, padding: "9px 4px" }} /><th style={{ padding: "9px 4px" }}>Parameter</th><th className="r" style={{ width: "22%", padding: "9px 4px" }}>Min</th><th className="r" style={{ width: "22%", padding: "9px 4px" }}>Max</th><th className="r" style={{ width: "20%", padding: "9px 4px" }}>Step</th></tr></thead>
           <tbody>
             {Object.entries(ranges as Record<string, Range>).map(([k, r]) => (
@@ -234,11 +234,11 @@ function OptHeatmap({ h, label: lbl, onPick }: { h: any; label: string; onPick: 
       yAxis: { type: "category", data: h.ys.map(String), name: h.y, nameLocation: "middle", nameGap: 40, nameTextStyle: { color: p.muted }, ...axisStyle(p), splitLine: { show: false } },
       visualMap: {
         min: Math.min(...vals), max: Math.max(...vals), calculable: true, orient: "vertical", right: 0, top: "center", itemHeight: 220,
-        textStyle: { color: p.muted, fontSize: 10 }, formatter: (v: any) => num(v, 2),
+        textStyle: { color: p.muted, fontSize: 12 }, formatter: (v: any) => num(v, 2),
         inRange: { color: isLight ? ["#eef3fa", "#d3e2f5", "#a6c4ec", "#6a9ddc", "#3570c2"] : ["#1d222b", "#22324a", "#2d4b74", "#4776b3", "#8fb6ea"] },
       },
       series: [{ type: "heatmap", data, itemStyle: { borderColor: p.surface, borderWidth: 2, borderRadius: 3 },
-        label: { show: h.xs.length * h.ys.length <= 120, fontSize: 9.5, color: p.text, textBorderColor: p.surface, textBorderWidth: 2, formatter: (it: any) => it.value[2] == null ? "" : num(it.value[2], 2) },
+        label: { show: h.xs.length * h.ys.length <= 120, fontSize: 11.5, color: p.text, textBorderColor: p.surface, textBorderWidth: 2, formatter: (it: any) => it.value[2] == null ? "" : num(it.value[2], 2) },
         emphasis: { itemStyle: { borderColor: p.text, borderWidth: 1.5 } } }],
     };
   }, [h, p, lbl]);

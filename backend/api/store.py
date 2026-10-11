@@ -115,3 +115,42 @@ def delete_strategy(slug: str) -> bool:
             p.unlink()
             ok = True
     return ok
+
+
+# --------------------------------------------------------------------------- #
+# Chart layouts (symbol, interval, chart type, indicators, drawings)
+# --------------------------------------------------------------------------- #
+LAYOUT_DIR = DATA_ROOT / "layouts"
+LAYOUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def save_layout(name: str, state: dict) -> dict:
+    slug = _slug(name)
+    doc = {"id": slug, "name": name.strip()[:80] or "Unnamed", "updated": datetime.now(timezone.utc).isoformat(), "state": state}
+    (LAYOUT_DIR / f"{slug}.json").write_text(json.dumps(doc))
+    return {k: v for k, v in doc.items() if k != "state"}
+
+
+def list_layouts() -> list[dict]:
+    out = []
+    for p in LAYOUT_DIR.glob("*.json"):
+        try:
+            d = json.loads(p.read_text())
+            out.append({"id": d["id"], "name": d["name"], "updated": d["updated"],
+                        "symbol": (d.get("state") or {}).get("symbol")})
+        except (ValueError, KeyError):
+            continue
+    return sorted(out, key=lambda d: d["updated"], reverse=True)
+
+
+def get_layout(lid: str) -> dict | None:
+    p = LAYOUT_DIR / f"{_slug(lid)}.json"
+    return json.loads(p.read_text()) if p.exists() else None
+
+
+def delete_layout(lid: str) -> bool:
+    p = LAYOUT_DIR / f"{_slug(lid)}.json"
+    if p.exists():
+        p.unlink()
+        return True
+    return False

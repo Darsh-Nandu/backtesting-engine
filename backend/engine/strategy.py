@@ -207,6 +207,9 @@ class Strategy:
     per_asset: bool = True
     # True for strategies that only ever buy (the UI warns when combined with "Short only").
     long_only: bool = False
+    # False: the global default stop-loss / take-profit / trailing / time exit are not attached
+    # to this strategy's positions (stops passed explicitly via buy(sl=...) still apply).
+    uses_default_exits: bool = True
 
     def __init__(self, engine: "Backtester", data: DataView, universe: dict[str, DataView], params: dict):
         self._engine = engine

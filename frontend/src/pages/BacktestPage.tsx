@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, Globe2, Layers, LineChart, ShieldCheck } from "lucide-react";
+import { AlertCircle, Globe2, Layers, LineChart, Play, ShieldCheck } from "lucide-react";
 import { api } from "../api";
 import { ConfigPanel } from "../components/ConfigPanel";
 import { Results } from "../components/Results";
@@ -10,6 +10,13 @@ export function BacktestPage() {
   const { config, result, setResult, toast } = useApp();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem("qf.settingsOpen") !== "0"; } catch { return true; }
+  });
+  const toggleSettings = () => setSettingsOpen((o) => {
+    try { localStorage.setItem("qf.settingsOpen", o ? "0" : "1"); } catch { /* ignore */ }
+    return !o;
+  });
 
   const busy = useRef(false);
   const run = useCallback(async () => {
@@ -35,11 +42,11 @@ export function BacktestPage() {
   }, [run, loading]);
 
   return (
-    <div className="bt-layout">
-      <div className="config">
+    <div className={`bt-layout ${settingsOpen || !result ? "" : "collapsed"}`}>
+      <div className="config" aria-hidden={!settingsOpen && !!result}>
         <ConfigPanel footer={
           <button className="btn btn-primary btn-run" onClick={run} disabled={loading || !config.symbols.length} title="Ctrl + Enter">
-            {loading ? <><Spinner /> Running…</> : "Run backtest"}
+            {loading ? <><Spinner /> Running…</> : <><Play size={14} fill="currentColor" />Run backtest<span className="kbd">Ctrl ↵</span></>}
           </button>
         } />
       </div>
@@ -51,7 +58,8 @@ export function BacktestPage() {
           </div>
         )}
         {loading && !result ? <LoadingSkeleton /> : result ? (
-          <div data-result-id={result.id} style={{ opacity: loading ? 0.55 : 1, transition: "opacity .2s" }}><Results key={result.id} res={result} /></div>
+          <div data-result-id={result.id} style={{ opacity: loading ? 0.55 : 1, transition: "opacity .2s" }}><Results key={result.id} res={result}
+            chrome={{ settingsOpen, onToggleSettings: toggleSettings, onRun: run, running: loading }} /></div>
         ) : <Welcome onRun={run} />}
       </div>
     </div>

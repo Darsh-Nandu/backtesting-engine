@@ -36,7 +36,7 @@ export function EChart({ option, height = 300, onClick, group }: {
 export function baseOption(p: Palette): echarts.EChartsOption {
   return {
     backgroundColor: "transparent",
-    textStyle: { fontFamily: "IBM Plex Sans, system-ui, sans-serif", color: p.text2 },
+    textStyle: { fontFamily: "Figtree Variable, Figtree, system-ui, sans-serif", color: p.text2 },
     animationDuration: 450,
     animationThreshold: 1200,
     tooltip: {
@@ -45,7 +45,7 @@ export function baseOption(p: Palette): echarts.EChartsOption {
       borderColor: p.border,
       borderWidth: 1,
       padding: [8, 11],
-      textStyle: { color: p.text, fontSize: 12 },
+      textStyle: { color: p.text, fontSize: 14, fontWeight: 500 },
       extraCssText: "border-radius:10px;box-shadow:0 12px 28px -12px rgba(0,0,0,.35);",
       axisPointer: { type: "line", lineStyle: { color: p.axis, width: 1 }, crossStyle: { color: p.axis } },
     },
@@ -56,7 +56,7 @@ export function axisStyle(p: Palette) {
   return {
     axisLine: { show: false, lineStyle: { color: p.axis } },
     axisTick: { show: false },
-    axisLabel: { color: p.muted, fontSize: 11 },
+    axisLabel: { color: p.muted, fontSize: 13, fontWeight: 500 },
     splitLine: { lineStyle: { color: p.grid, type: "solid" as const, opacity: 0.9 } },
   };
 }

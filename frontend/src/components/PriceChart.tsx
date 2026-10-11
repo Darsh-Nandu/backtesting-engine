@@ -31,8 +31,8 @@ export function PriceChart({ res, symbol, height = 520, showTrades = true, showV
     const chart = createChart(el.current, {
       autoSize: true,
       layout: {
-        background: { type: ColorType.Solid, color: "transparent" }, textColor: p.muted, fontSize: 11,
-        fontFamily: "IBM Plex Sans, system-ui, sans-serif",
+        background: { type: ColorType.Solid, color: "transparent" }, textColor: p.muted, fontSize: 13,
+        fontFamily: "Figtree Variable, Figtree, system-ui, sans-serif",
         panes: { separatorColor: p.grid, separatorHoverColor: p.axis, enableResize: true },
         attributionLogo: false,
       },
@@ -129,7 +129,7 @@ export function PriceChart({ res, symbol, height = 520, showTrades = true, showV
   const last = data.close.filter((v) => v != null).slice(-1)[0];
   return (
     <div style={{ position: "relative" }}>
-      <div style={{ position: "absolute", top: 6, left: 10, zIndex: 3, fontSize: 12, display: "flex", gap: 12, pointerEvents: "none" }} className="num">
+      <div style={{ position: "absolute", top: 6, left: 10, zIndex: 3, fontSize: 14, display: "flex", gap: 12, pointerEvents: "none" }} className="num">
         <b>{symbol}</b>
         {legend ? (
           <>

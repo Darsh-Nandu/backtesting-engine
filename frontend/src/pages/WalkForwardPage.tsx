@@ -105,7 +105,7 @@ function WFResults({ r }: { r: any; currency: string }) {
       { xAxis: new Date(f.test_start).getTime(), itemStyle: { color: i % 2 ? p.grid + "00" : p.grid + "66" }, name: `F${f.fold}` },
       { xAxis: new Date(f.test_end).getTime() },
     ]);
-    series[0].markArea = { silent: true, data: marks, label: { color: p.muted, fontSize: 10, position: "insideTop" } };
+    series[0].markArea = { silent: true, data: marks, label: { color: p.muted, fontSize: 12, position: "insideTop" } };
     return {
       ...baseOption(p),
       grid: { left: 64, right: 16, top: 24, bottom: 30 },
@@ -118,7 +118,7 @@ function WFResults({ r }: { r: any; currency: string }) {
 
   const foldOpt = useMemo<EChartsOption>(() => ({
     ...baseOption(p),
-    legend: { top: 0, right: 0, textStyle: { color: p.text2, fontSize: 11 }, itemWidth: 10, itemHeight: 10 },
+    legend: { top: 0, right: 0, textStyle: { color: p.text2, fontSize: 13 }, itemWidth: 10, itemHeight: 10 },
     grid: { left: 48, right: 10, top: 30, bottom: 26 },
     tooltip: { ...(baseOption(p).tooltip as any), axisPointer: { type: "shadow", shadowStyle: { color: p.grid + "80" } }, valueFormatter: (v: any) => num(v, 3) },
     xAxis: { type: "category", data: r.folds.map((f: any) => `Fold ${f.fold}`), ...axisStyle(p), splitLine: { show: false } },
@@ -171,7 +171,7 @@ function Timeline({ folds }: { folds: any[] }) {
     <div className="stack" style={{ gap: 9, paddingTop: 6 }}>
       {folds.map((f) => (
         <div key={f.fold} className="row" style={{ gap: 10 }}>
-          <span className="muted num" style={{ width: 48, fontSize: 11.5 }}>Fold {f.fold}</span>
+          <span className="muted num" style={{ width: 48, fontSize: 13.5 }}>Fold {f.fold}</span>
           <div style={{ position: "relative", flex: 1, height: 18, background: "var(--surface-2)", borderRadius: 5 }}>
             <div title="Training" style={{ position: "absolute", left: `${x(f.train_start)}%`, width: `${x(f.train_end) - x(f.train_start)}%`, top: 0, bottom: 0, background: "color-mix(in srgb, var(--s7) 55%, transparent)", borderRadius: "5px 0 0 5px" }} />
             <div title="Testing" style={{ position: "absolute", left: `${x(f.test_start)}%`, width: `${Math.max(x(f.test_end) - x(f.test_start), 1)}%`, top: 0, bottom: 0, background: "var(--s1)", borderRadius: "0 5px 5px 0" }} />

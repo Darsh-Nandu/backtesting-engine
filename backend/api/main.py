@@ -19,7 +19,9 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from backend.engine import charting
 from backend.engine import data as datamod
+from backend.engine.compare import compare as run_compare
 from backend.engine.costs import COST_MODELS
 from backend.engine.indicators import __all__ as INDICATORS
 from backend.engine.library import LIBRARY, describe
@@ -159,6 +161,46 @@ def symbol_search(q: str):
     return datamod.search_symbols(q.strip())
 
 
+# --------------------------------------------------------------------------- #
+# Interactive chart
+# --------------------------------------------------------------------------- #
+@app.get("/api/chart/bars")
+def chart_bars(symbol: str, interval: str = "1D"):
+    return _fast_json(charting.bars(symbol, interval))
+
+
+class LayoutBody(BaseModel):
+    name: str
+    state: dict
+
+
+@app.get("/api/layouts")
+def layouts():
+    return store.list_layouts()
+
+
+@app.post("/api/layouts")
+def save_layout(body: LayoutBody):
+    if len(json.dumps(body.state)) > 2_000_000:
+        raise HTTPException(413, "Layout too large")
+    return store.save_layout(body.name, body.state)
+
+
+@app.get("/api/layouts/{lid}")
+def get_layout(lid: str):
+    d = store.get_layout(lid)
+    if d is None:
+        raise HTTPException(404, "Layout not found")
+    return d
+
+
+@app.delete("/api/layouts/{lid}")
+def delete_layout(lid: str):
+    if not store.delete_layout(lid):
+        raise HTTPException(404, "Layout not found")
+    return {"ok": True}
+
+
 @app.get("/api/data/preview")
 def data_preview(symbol: str, market: str = "NASDAQ", source: str = "yahoo", start: str | None = None,
                  end: str | None = None, interval: str = "1d", adjusted: bool = True):
@@ -218,6 +260,20 @@ def backtest(req: dict):
     if req.get("save", True):
         store.save_run(result)
     return _fast_json(result)
+
+
+@app.post("/api/compare")
+def compare(req: dict):
+    """Run several strategies on the same data and settings. Not saved to history."""
+    specs = []
+    for spec in req.get("strategies") or []:
+        specs.append(_inject_custom_code({"strategy": dict(spec or {})})["strategy"])
+    try:
+        return _fast_json(run_compare({**req, "strategies": specs}))
+    except (StrategyCodeError, datamod.DataError, ValueError, HTTPException):
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"{type(e).__name__}: {e}\n{traceback.format_exc(limit=6)}")
 
 
 @app.get("/api/runs")

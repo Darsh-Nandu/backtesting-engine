@@ -11,7 +11,8 @@ touched. Only the downloaded-price cache is shared, to keep it fast.
 It clicks every navigation item, control and results tab, runs every built-in
 strategy, writes a new strategy in the Strategy Lab (plus broken ones, to check
 error reporting), optimises and walk-forward-tests it, uploads a CSV, and
-exercises the history page. A report is written to e2e/output/report.md with
+exercises the history page, the strategy comparison and the Analyze charting
+workspace (drawings, indicators, replay, alerts, layouts). A report is written to e2e/output/report.md with
 screenshots of any failure.
 """
 from __future__ import annotations
@@ -74,7 +75,7 @@ class UI:
             o.binary_location = os.environ.get("FIREFOX_BIN", str(snap_ff))
         for k, v in {"browser.download.folderList": 2, "browser.download.dir": str(DOWNLOADS),
                      "browser.download.useDownloadDir": True, "browser.download.manager.showWhenStarting": False,
-                     "browser.helperApps.neverAsk.saveToDisk": "text/csv,application/json,application/octet-stream"}.items():
+                     "browser.helperApps.neverAsk.saveToDisk": "text/csv,application/json,text/html,application/octet-stream,image/png"}.items():
             o.set_preference(k, v)
         gd = os.environ.get("GECKODRIVER") or ("/snap/bin/geckodriver" if Path("/snap/bin/geckodriver").exists() else None)
         self.d = webdriver.Firefox(options=o, service=Service(gd) if gd else None)
@@ -123,15 +124,28 @@ class UI:
             self.js("arguments[0].click()", e)
         time.sleep(0.15)
 
+    def pick(self, select_el) -> Select:
+        """A <select>, scrolled to the middle of its pane first (sticky footers can cover the bottom edge)."""
+        self.js("arguments[0].scrollIntoView({block: 'center'})", select_el)
+        return Select(select_el)
+
     def click_text(self, text, css="button", scope=None, exact=False):
         self.click(self.by_text(text, css, scope, exact))
 
+    ANALYSIS_PAGES = {"Chart", "Quant analysis"}
+
     def nav(self, label):
-        self.click_text(label, ".nav-item")
+        """Open a page: pick its section in the app bar, then the page in the sub-navigation."""
+        section = "Analysis" if label in self.ANALYSIS_PAGES else "Backtesting"
+        if not self.els(f'.subnav .nav-item[aria-label="{label}"]'):
+            self.click(self.el(f'.nav-section[aria-label="{section}"]'))
+            self.wait(f"document.querySelector('.subnav .nav-item[aria-label=\"{label}\"]')", 5, f"{section} sub-navigation")
+        self.click(self.el(f'.subnav .nav-item[aria-label="{label}"]'))
 
     def section(self, title, open_=True) -> object:
         for s in self.els(".section"):
-            if self.el(".section-head .t", s).text.strip() == title:
+            # Compare the DOM text, not the rendered text (section titles are styled uppercase).
+            if self.el(".section-head .t", s).get_attribute("textContent").strip().lower() == title.lower():
                 is_open = "open" in s.get_attribute("class")
                 if is_open != open_:
                     self.click(self.el(".section-head", s))
@@ -141,7 +155,7 @@ class UI:
     def field(self, label, scope=None):
         for f in self.els(".field", scope):
             lab = self.els(":scope > label", f)
-            if lab and lab[0].text.strip().startswith(label):
+            if lab and lab[0].get_attribute("textContent").strip().startswith(label):
                 return f
         raise AssertionError(f"field {label!r} not found")
 
@@ -261,31 +275,72 @@ def shell_tests(s: Suite):
     ui.load("backtest", CANON)
 
     def nav_all():
-        pages = {"Backtest": "Backtest", "Optimize": "Parameter optimisation", "Walk-forward": "Walk-forward analysis",
-                 "Strategy Lab": "Strategy Lab", "Data": "Market data", "History": "Run history"}
+        pages = {"Chart": "Chart", "Quant analysis": "Quant analysis", "Backtest": "Backtest", "Compare": "Strategy comparison", "Optimize": "Parameter optimisation", "Walk-forward": "Walk-forward analysis",
+                 "Strategy Lab": "Strategy Lab", "Market data": "Market data", "History": "Run history"}
         for label, title in pages.items():
             ui.nav(label)
             ui.wait(f"document.querySelector('.topbar h1').textContent === {json.dumps(title)}", 10, f"{label} page")
         ui.nav("Backtest")
         return f"{len(pages)} pages"
-    s.check("Sidebar navigation reaches every page", nav_all)
+    s.check("Navigation reaches every page in both sections", nav_all)
+
+    def nav_menus():
+        from selenium.webdriver.common.action_chains import ActionChains
+        tabs = [b.get_attribute("aria-label") for b in ui.els(".nav-section")]
+        assert tabs == ["Analysis", "Backtesting"], tabs
+        ActionChains(ui.d).move_to_element(ui.el('.nav-section[aria-label="Backtesting"]')).perform()
+        ui.wait("document.querySelectorAll('.nav-menu .nav-menu-item').length === 7", 5, "Backtesting menu")
+        ui.click([b for b in ui.els(".nav-menu .nav-menu-item") if b.text.startswith("History")][0])
+        ui.wait("document.querySelector('.topbar h1').textContent === 'Run history'", 10, "history via menu")
+        ui.click(ui.el('.nav-section[aria-label="Analysis"]'))
+        ui.wait("['Chart', 'Quant analysis'].includes(document.querySelector('.topbar h1').textContent)", 10, "analysis section")
+        sub = [b.get_attribute("aria-label") for b in ui.els(".subnav .nav-item")]
+        assert sub == ["Chart", "Quant analysis"], sub
+        ui.click(ui.el('.nav-section[aria-label="Backtesting"]'))
+        ui.wait("document.querySelector('.topbar h1').textContent === 'Run history'", 10, "section remembers its last page")
+        ui.nav("Backtest")
+        return f"sections {tabs}; dropdown menu; Analysis pages {sub}; last page remembered"
+    s.check("Two sections with sub-pages and dropdown menus", nav_menus)
 
     def theme():
         start = ui.js("return document.documentElement.dataset.theme")
-        ui.click_text("Light mode" if start == "dark" else "Dark mode", ".nav-item")
+        ui.click(ui.el(".theme-toggle"))
         mid = ui.js("return document.documentElement.dataset.theme")
-        ui.click_text("Light mode" if mid == "dark" else "Dark mode", ".nav-item")
+        ui.click(ui.el(".theme-toggle"))
         end = ui.js("return document.documentElement.dataset.theme")
         assert start != mid and end == start, (start, mid, end)
         return f"{start} -> {mid} -> {end}"
     s.check("Theme toggle switches and switches back", theme)
 
-    def collapse():
-        ui.click_text("Collapse", ".nav-item")
-        assert "collapsed" in ui.el(".app").get_attribute("class")
-        ui.click(ui.els(".sidebar-foot .nav-item")[-1])
-        assert "collapsed" not in ui.el(".app").get_attribute("class")
-    s.check("Sidebar collapses and expands", collapse)
+    def palettes():
+        accent = "return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()"
+        ui.click(ui.el(".appearance-btn"))
+        ui.wait("document.querySelector('.appearance-pop')", 5, "appearance menu")
+        names = [b.get_attribute("aria-label") for b in ui.els(".ap-pal")]
+        assert names == ["Cobalt", "Violet", "Ocean", "Sunset", "Graphite"], names
+        seen = set()
+        for n in names:
+            ui.click(ui.el(f'.ap-pal[aria-label="{n}"]'))
+            assert ui.js("return document.documentElement.dataset.palette") == n.lower()
+            assert ui.js("return localStorage.getItem('qf.palette')") == n.lower()
+            seen.add(ui.js(accent))
+        assert len(seen) == len(names), seen
+        start = ui.js("return document.documentElement.dataset.theme")
+        other = "light" if start == "dark" else "dark"
+        ui.click([b for b in ui.els(".ap-mode") if b.text.strip().lower() == other][0])
+        assert ui.js("return document.documentElement.dataset.theme") == other
+        ui.click([b for b in ui.els(".ap-mode") if b.text.strip().lower() == start][0])
+        ui.click(ui.el('.ap-pal[aria-label="Cobalt"]'))
+        ui.el("body").send_keys(Keys.ESCAPE)
+        ui.wait("!document.querySelector('.appearance-pop')", 5, "menu closes on Escape")
+        return f"{len(names)} palettes with distinct accents; mode switch; persisted"
+    s.check("Colour palettes switch, persist and close on Escape", palettes)
+
+    def frame():
+        assert ui.el(".appbar").is_displayed() and ui.el(".statusbar").is_displayed()
+        ui.wait("document.querySelector('.statusbar').textContent.includes('Engine ready')", 10, "status bar")
+        return ui.el(".statusbar").text.replace("\n", " | ")[:90]
+    s.check("App bar and status bar render", frame)
 
 
 def config_tests(s: Suite):
@@ -306,11 +361,11 @@ def config_tests(s: Suite):
 
     def exchange():
         data = ui.section("Data")
-        Select(ui.el("select", ui.field("Exchange", data))).select_by_value("NASDAQ")
+        ui.pick(ui.el("select", ui.field("Exchange", data))).select_by_value("NASDAQ")
         time.sleep(0.3)
         c = ui.config()
         assert c["market"] == "NASDAQ" and c["symbols"] == ["AAPL"], c["symbols"]
-        Select(ui.el("select", ui.field("Exchange", data))).select_by_value("NSE")
+        ui.pick(ui.el("select", ui.field("Exchange", data))).select_by_value("NSE")
         time.sleep(0.3)
         return f"NASDAQ -> {ui.config()['symbols']}"
     s.check("Exchange select switches market and default symbol", exchange)
@@ -364,9 +419,9 @@ def config_tests(s: Suite):
 
     def misc_data():
         data = ui.section("Data")
-        Select(ui.el("select", ui.field("Timeframe", data))).select_by_value("1wk")
+        ui.pick(ui.el("select", ui.field("Timeframe", data))).select_by_value("1wk")
         assert ui.config()["interval"] == "1wk"
-        Select(ui.el("select", ui.field("Timeframe", data))).select_by_value("1d")
+        ui.pick(ui.el("select", ui.field("Timeframe", data))).select_by_value("1d")
         ui.type_into(ui.el("input", ui.field("Benchmark", data)), "^NSEBANK")
         assert ui.config()["benchmark"] == "^NSEBANK"
         ui.type_into(ui.el("input", ui.field("Benchmark", data)), "auto")
@@ -377,7 +432,7 @@ def config_tests(s: Suite):
 
     def strategy_params():
         st = ui.section("Strategy")
-        sel = Select(ui.el("select", st))
+        sel = ui.pick(ui.el("select", st))
         sel.select_by_value("RsiReversion")
         time.sleep(0.3)
         labels = [l.text for l in ui.els(".grid2 .field > label", st)]
@@ -392,13 +447,13 @@ def config_tests(s: Suite):
         sec = ui.section("Capital & costs")
         ui.type_into(ui.el("input", ui.field("Initial capital", sec)), 500000)
         assert ui.config()["capital"] == 500000
-        sel = Select(ui.el("select", ui.field("Commission model", sec)))
+        sel = ui.pick(ui.el("select", ui.field("Commission model", sec)))
         seen = []
         for opt in [o.get_attribute("value") for o in sel.options]:
-            Select(ui.el("select", ui.field("Commission model", sec))).select_by_value(opt)
+            ui.pick(ui.el("select", ui.field("Commission model", sec))).select_by_value(opt)
             time.sleep(0.15)
             seen.append(opt or "auto")
-        Select(ui.el("select", ui.field("Commission model", sec))).select_by_value("")
+        ui.pick(ui.el("select", ui.field("Commission model", sec))).select_by_value("")
         ui.click_text("Same bar close", ".seg button", sec)
         assert ui.config()["fill_on"] == "close"
         ui.click_text("Next bar open", ".seg button", sec)
@@ -409,7 +464,7 @@ def config_tests(s: Suite):
 
     def sizing():
         sec = ui.section("Sizing & risk")
-        sel = lambda: Select(ui.el("select", ui.field("Position sizing", sec)))
+        sel = lambda: ui.pick(ui.el("select", ui.field("Position sizing", sec)))
         labels = []
         for mode in ("risk", "fixed_cash", "fixed_qty", "percent"):
             sel().select_by_value(mode); time.sleep(0.15)
@@ -459,7 +514,7 @@ def strategy_matrix(s: Suite):
     ui = s.ui
     print("\n[3] Every built-in strategy through the UI")
     ui.load("backtest", CANON)
-    sel = lambda: Select(ui.el("select", ui.section("Strategy")))
+    sel = lambda: ui.pick(ui.el("select", ui.section("Strategy")))
     options = [(o.get_attribute("value"), o.text) for o in sel().options if not o.get_attribute("value").startswith("custom:")]
     table = []
     for sid, label in options:
@@ -485,29 +540,55 @@ def results_tests(s: Suite):
     s.check("Run SMA Crossover (baseline result)", lambda: ui.run_backtest()["kpis"])
 
     def overview():
-        assert ui.canvases() >= 1
+        cards = len(ui.els(".kpi-cards .kpi")); stats = len(ui.els(".stat-strip .stat"))
         cells = ui.js("return document.querySelectorAll('.heat .hc').length")
-        rows = ui.js("return document.querySelectorAll('.metric-cols .metric-row').length")
+        recent = ui.js("return [...document.querySelectorAll('.pane .card')].find(c => c.textContent.startsWith('Recent trades')).querySelectorAll('tbody tr').length")
         ui.click_text("Log", ".seg button", ui.el(".pane")); time.sleep(0.4)
         ui.click_text("Linear", ".seg button", ui.el(".pane"))
-        assert cells > 100 and rows == 18, (cells, rows)
-        return f"{cells} heatmap cells, {rows} key stats"
-    s.check("Overview: equity chart, Linear/Log, heatmap, key stats", overview)
+        assert cards == 4 and stats == 7 and cells > 100 and recent == 8 and ui.canvases() >= 3, (cards, stats, cells, recent)
+        return f"4 KPI cards, 7 stats, {cells} heatmap cells, {ui.canvases()} charts, 8 recent trades"
+    s.check("Overview: KPI cards, stat strip, chart grid, recent trades", overview)
+
+    def period_filter():
+        total = lambda: ui.summary()["kpis"]["Total return"]
+        trades_tab = lambda: ui.summary()["trades"]
+        before, n_before = total(), trades_tab()
+        ui.click_text("3Y", ".rh-filter button", exact=True); time.sleep(0.8)
+        after, n_after = total(), trades_tab()
+        ui.click_text("All", ".rh-filter button", exact=True); time.sleep(0.8)
+        assert after != before and n_after < n_before and total() == before, (before, after, n_before, n_after)
+        return f"All {before} ({n_before} trades) -> 3Y {after} ({n_after} trades) -> All"
+    s.check("Period filter recomputes KPIs, charts and tables", period_filter)
+
+    def settings_collapse():
+        ui.click_text("Hide settings", ".result-actions button")
+        assert "collapsed" in ui.el(".bt-layout").get_attribute("class")
+        before = ui.result_id()
+        ui.click(ui.by_text("Run", ".result-actions button", exact=True))
+        ui.wait(f"document.querySelector('[data-result-id]').dataset.resultId !== {json.dumps(before)}", 90, "run from header")
+        ui.click_text("Settings", ".result-actions button", exact=True)
+        assert "collapsed" not in ui.el(".bt-layout").get_attribute("class")
+        return "hidden -> run from header -> shown"
+    s.check("Collapse settings and re-run from the header", settings_collapse)
 
     def exports():
         before = set(ui.downloads())
-        ui.click_text("JSON", ".result-actions button"); ui.click_text("CSV", ".result-actions button")
-        ui.wait("true", 1)
-        end = time.time() + 10
-        while time.time() < end and len(set(ui.downloads()) - before) < 2:
+        for item in ("Full result (JSON)", "Equity curve (CSV)", "Dashboard (HTML)"):
+            ui.click_text("Export", ".result-actions button")
+            ui.click(ui.by_text(item, ".menu-item"))
+            time.sleep(0.6)
+        end = time.time() + 12
+        while time.time() < end and len(set(ui.downloads()) - before) < 3:
             time.sleep(0.3)
         new = set(ui.downloads()) - before
-        assert any(n.endswith(".json") for n in new) and any(n.endswith(".csv") for n in new), new
-        j = json.loads(next(DOWNLOADS / n for n in new if n.endswith(".json")).read_text())
-        csv_lines = next(DOWNLOADS / n for n in new if n.endswith(".csv")).read_text().splitlines()
+        get = lambda ext: next(DOWNLOADS / n for n in new if n.endswith(ext))
+        j = json.loads(get(".json").read_text())
+        csv_lines = get(".csv").read_text().splitlines()
+        html = get(".html").read_text()
         assert "metrics" in j and len(csv_lines) > 1000 and csv_lines[0].startswith("date,equity")
-        return f"{sorted(new)}"
-    s.check("Export JSON and equity CSV downloads", exports)
+        assert "new Dashboard(DATA)" in html and "chart.js@4.5.1" in html and '"trades":[[' in html
+        return f"{sorted(new)} (dashboard {len(html) // 1024} KB)"
+    s.check("Export menu: JSON, CSV and self-contained HTML dashboard", exports)
 
     def chart():
         ui.tab("Chart")
@@ -515,7 +596,7 @@ def results_tests(s: Suite):
         pane = ui.el(".pane")
         ui.click(ui.by_text("Trades", "label.toggle", pane)); ui.click(ui.by_text("Volume", "label.toggle", pane))
         ui.click(ui.by_text("Trades", "label.toggle", pane)); ui.click(ui.by_text("Volume", "label.toggle", pane))
-        sym = Select(ui.el(".card-actions select", pane))
+        sym = ui.pick(ui.el(".card-actions select", pane))
         sym.select_by_index(1); time.sleep(0.6)
         title = ui.els(".pane .card-title")[1].text
         assert sym.first_selected_option.text in title, title
@@ -537,8 +618,8 @@ def results_tests(s: Suite):
         segs = ui.els(".card-actions .seg", pane)
         ui.click_text("Short", ".seg button", segs[0]); sh = count()
         ui.click_text("All", ".seg button", segs[0], exact=True)
-        Select(ui.el(".card-actions select", pane)).select_by_index(1); one = count()
-        Select(ui.el(".card-actions select", pane)).select_by_index(0)
+        ui.pick(ui.el(".card-actions select", pane)).select_by_index(1); one = count()
+        ui.pick(ui.el(".card-actions select", pane)).select_by_index(0)
         assert one < total
         # sort by P&L descending
         ui.click(ui.by_text("P&L", ".pane .tbl th")); time.sleep(0.3)
@@ -656,7 +737,7 @@ def lab_tests(s: Suite):
     s.check("Save & backtest runs the new strategy end to end", save_and_run)
 
     def in_dropdown():
-        opts = [o.text for o in Select(ui.el("select", ui.section("Strategy"))).options]
+        opts = [o.text for o in ui.pick(ui.el("select", ui.section("Strategy"))).options]
         assert "Squeeze Breakout" in opts
         grp = ui.js("return [...document.querySelectorAll('optgroup')].map(g => g.label)")
         assert grp[0] == "My strategies", grp
@@ -793,7 +874,7 @@ def data_tests(s: Suite):
         ui.click_text("Backtest this", "button")
         ui.wait("document.querySelector('.topbar h1').textContent === 'Backtest'", 10, "jump to backtest")
         assert ui.config()["symbols"] == ["TCS"]
-        ui.nav("Data")
+        ui.nav("Market data")
     s.check("Explorer: load, popular chip, 'Backtest this'", explorer)
 
     def upload():
@@ -814,7 +895,7 @@ def data_tests(s: Suite):
     s.check("CSV upload, view, backtest from upload", upload)
 
     def delete_upload():
-        ui.nav("Data")
+        ui.nav("Market data")
         ui.wait("[...document.querySelectorAll('.tbl td')].some(td => td.textContent === 'E2E_UPLOAD')", 10, "upload row")
         row = [r for r in ui.els(".tbl tbody tr") if "E2E_UPLOAD" in r.text][0]
         ui.click(ui.el(".btn-danger", row))
@@ -857,7 +938,7 @@ def history_tests(s: Suite):
         boxes = ui.els(".tbl tbody input[type=checkbox]")[:3]
         for b in boxes:
             ui.click(b)
-        ui.click(ui.by_text("Compare", "button"))
+        ui.click(ui.by_text("Compare", "button", card("Backtest history")))  # not the Compare tab in the app bar
         ui.wait("[...document.querySelectorAll('.card-title')].some(t => t.textContent === 'Run comparison')", 30, "comparison")
         cmp = card("Run comparison")
         cols = len(ui.els(".tbl thead th", cmp))
@@ -916,7 +997,7 @@ def mobile_test(s: Suite):
     ui.load("backtest", CANON)
 
     def mobile():
-        assert ui.el(".sidebar").is_displayed()
+        assert ui.el(".sections").is_displayed() and ui.el(".subnav").is_displayed()
         ui.nav("History")
         ui.wait("document.querySelector('.topbar h1').textContent === 'Run history'", 10, "history")
         ui.nav("Backtest")
@@ -926,6 +1007,407 @@ def mobile_test(s: Suite):
         return f"nav ok, backtest ok ({res['trades']} trades), no horizontal overflow"
     s.check("Navigation and backtest at phone width", mobile)
     ui.d.set_window_size(1600, 1000)
+
+
+def compare_tests(s: Suite):
+    ui = s.ui
+    print("\n[11] Strategy comparison")
+    cfg = dict(CANON, symbols=["RELIANCE"])
+    ui.d.get(BASE + "/")
+    ui.js("localStorage.removeItem('qf.compare.picks'); localStorage.setItem('qf.compare.settingsOpen', '1')")
+    ui.load("compare", cfg)
+    picks = lambda: json.loads(ui.js("return localStorage.getItem('qf.compare.picks')") or "[]")
+    names = lambda: ui.js("return [...document.querySelectorAll('.cmp-pick-name b')].map(b => b.textContent)")
+    run_btn = lambda: [b for b in ui.els(".config .btn-run")][0]
+
+    def picker():
+        start = names()
+        assert len(start) == 4, start
+        ui.pick(ui.el(".cmp-add select")).select_by_visible_text("Donchian Breakout (Turtle)")
+        ui.wait("document.querySelectorAll('.cmp-pick').length === 5", 5, "added strategy")
+        sma = [i for i, n in enumerate(names()) if n == "SMA Crossover"][0]
+        ui.click(ui.els(".cmp-pick")[sma].find_element(By.CSS_SELECTOR, "button[aria-label^='Duplicate']"))
+        ui.wait("document.querySelectorAll('.cmp-pick').length === 6", 5, "duplicate")
+        body = ui.el(".cmp-pick.open .cmp-pick-body")
+        ui.type_into(ui.el("input", ui.field("fast", body)), 50)
+        ui.type_into(ui.el("input", ui.field("slow", body)), 200)
+        ui.wait("[...document.querySelectorAll('.cmp-pick-name b')].some(b => b.textContent === 'SMA Crossover (fast 50, slow 200)')", 5, "label")
+        last = ui.els(".cmp-pick")[-1]
+        ui.click(last.find_element(By.CSS_SELECTOR, "button[aria-label^='Remove']"))
+        ui.wait("document.querySelectorAll('.cmp-pick').length === 5", 5, "remove")
+        saved = picks()
+        assert len(saved) == 5 and {"fast": 50, "slow": 200} in [p["params"] for p in saved], saved
+        assert "Compare 5 strategies" in run_btn().text, run_btn().text
+        return " | ".join(names())
+    s.check("Pick, duplicate, edit and remove strategies", picker)
+
+    def guard():
+        ui.click_text("Clear", ".cmp-chip")
+        ui.wait("document.querySelectorAll('.cmp-pick').length === 0", 5, "cleared")
+        assert not run_btn().is_enabled()
+        ui.pick(ui.el(".cmp-add select")).select_by_visible_text("Buy & Hold")
+        time.sleep(0.2)
+        assert not run_btn().is_enabled() and "1 strategy" in run_btn().text
+        ui.click_text("Trend following", ".cmp-chip")
+        n = len(ui.els(".cmp-pick"))
+        assert n >= 4 and run_btn().is_enabled(), n
+        for _ in range(8):  # top up to the limit
+            if not ui.el(".cmp-add select").is_enabled():
+                break
+            ui.pick(ui.el(".cmp-add select")).select_by_visible_text("RSI Mean Reversion")
+        assert len(ui.els(".cmp-pick")) == 8 and not ui.el(".cmp-add select").is_enabled()
+        return f"empty and single picks blocked, group added {n}, capped at 8"
+    s.check("Needs two strategies, caps at eight", guard)
+
+    def run():
+        ui.js("localStorage.setItem('qf.compare.picks', arguments[0])", json.dumps([
+            {"id": "BuyAndHold", "params": {}}, {"id": "SmaCross", "params": {}},
+            {"id": "SmaCross", "params": {"fast": 50, "slow": 200}}, {"id": "MacdCross", "params": {}}]))
+        ui.load("compare", cfg)
+        ui.click(run_btn())
+        ui.wait("document.querySelector('[data-compare-id]') || document.querySelector('.pane .alert.err')", 150, "comparison")
+        assert not ui.els(".pane .alert.err"), ui.el(".pane .alert.err").text
+        leaders = ui.js("return [...document.querySelectorAll('.cmp-leaders .kpi-label')].map(e => e.textContent)")
+        legend = len(ui.els(".cmp-legend .cmp-leg"))
+        ranked = len(ui.els(".cmp-table tbody tr:not(.ref-row)"))
+        refs = len(ui.els(".cmp-table tbody tr.ref-row"))
+        cells = len(ui.els(".heat.corr .hc"))
+        assert len(leaders) == 4 and legend == 6 and ranked == 4 and refs == 2 and cells == 25 and ui.canvases() >= 3, \
+            (leaders, legend, ranked, refs, cells)
+        return f"cards {leaders}; {ranked} ranked + {refs} reference rows; 5x5 correlation"
+    s.check("Run a four-strategy comparison", run)
+
+    def consistent():
+        # The comparison must match a stand-alone backtest of the same strategy on the same settings.
+        # Take the exact request from the JSON export (this also checks that export).
+        before = set(ui.downloads())
+        ui.click_text("Export", ".result-actions button")
+        ui.click_text("Full result (JSON)", ".menu-item")
+        end = time.time() + 10
+        while time.time() < end and not (set(ui.downloads()) - before):
+            time.sleep(0.2)
+        new = sorted(set(ui.downloads()) - before)
+        assert new, "no JSON download"
+        req = json.loads((DOWNLOADS / new[0]).read_text())["request"]
+        req.pop("strategies", None)
+        body = dict(req, strategy={"id": "SmaCross", "params": {}}, save=False)
+        # WebDriver waits for a returned promise.
+        single = ui.js("return fetch('/api/backtest', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: arguments[0]})"
+                       ".then(r => r.json()).then(j => j.metrics.total_return_pct)", json.dumps(body))
+        row = ui.js("""const r = [...document.querySelectorAll('.cmp-table tbody tr')].find(r => r.querySelector('.cmp-name-cell b')?.textContent === 'SMA Crossover');
+                       return r.children[2].textContent;""")
+        assert row.replace("+", "").rstrip("%") == f"{single:.2f}", (row, single)
+        return f"SMA Crossover {row} in both"
+    s.check("Comparison matches a single backtest", consistent)
+
+    def sort_by(label):
+        th = [t for t in ui.els(".cmp-table th") if t.get_attribute("textContent").strip() == label][0]
+        ui.click(th)
+        time.sleep(0.2)
+
+    def interact():
+        sort_by("Return")
+        rets = ui.js("return [...document.querySelectorAll('.cmp-table tbody tr:not(.ref-row)')].map(r => parseFloat(r.children[2].textContent.replace('+','')))")
+        assert rets == sorted(rets, reverse=True), rets
+        sort_by("Return")
+        rets2 = ui.js("return [...document.querySelectorAll('.cmp-table tbody tr:not(.ref-row)')].map(r => parseFloat(r.children[2].textContent.replace('+','')))")
+        assert rets2 == sorted(rets2), rets2
+        leg = ui.els(".cmp-legend .cmp-leg")[1]
+        ui.click(leg)
+        assert "off" in leg.get_attribute("class")
+        ui.click(leg)
+        before = ui.js("return document.querySelector('.cmp-leaders .kpi-value').textContent")
+        ui.click_text("3Y", ".rh-filter button", exact=True)
+        time.sleep(0.5)
+        after = ui.js("return document.querySelector('.cmp-leaders .kpi-value').textContent")
+        assert before != after, (before, after)
+        ui.click_text("All", ".rh-filter button", exact=True)
+        return f"sorted both ways, legend toggles, 3Y window: {before} -> {after}"
+    s.check("Sort, legend toggle and period filter", interact)
+
+    def tabs():
+        ui.tab("Returns")
+        years = len(ui.els(".pane .tbl tbody tr"))
+        assert ui.canvases() >= 1 and years == 6, years
+        ui.tab("All metrics")
+        stars = ui.js("return [...document.querySelectorAll('.cmp-metrics td')].filter(t => t.textContent.includes('★')).length")
+        rows = len(ui.els(".cmp-metrics tbody tr"))
+        assert stars > 10 and rows > 25, (stars, rows)
+        ui.tab("Overview")
+        return f"consistency rows {years}; {rows} metric rows, {stars} best marks"
+    s.check("Returns and All metrics tabs", tabs)
+
+    def export():
+        before = set(ui.downloads())
+        ui.click_text("Export", ".result-actions button")
+        ui.click_text("Comparison table (CSV)", ".menu-item")
+        end = time.time() + 10
+        while time.time() < end and not (set(ui.downloads()) - before):
+            time.sleep(0.2)
+        new = sorted(set(ui.downloads()) - before)
+        assert new and new[0].startswith("comparison_"), new
+        lines = (DOWNLOADS / new[0]).read_text().strip().splitlines()
+        assert len(lines) == 7 and lines[0].startswith("strategy,"), lines[:2]
+        return f"{new[0]}: {len(lines) - 1} rows"
+    s.check("Export the comparison table", export)
+
+    def open_one():
+        row = [r for r in ui.els(".cmp-table tbody tr:not(.ref-row)") if ui.el(".cmp-name-cell b", r).text == "MACD Signal Cross"][0]
+        ui.click(ui.el(".cmp-open", row))
+        ui.wait("document.querySelector('.topbar h1').textContent === 'Backtest' && document.querySelector('[data-result-id]')", 60, "backtest page")
+        title = ui.summary()["title"]
+        assert title == "MACD Signal Cross", title
+        ui.nav("Compare")
+        ui.wait("document.querySelector('[data-compare-id]')", 10, "comparison kept")
+        return f"opened '{title}', comparison still there on return"
+    s.check("Open a strategy as a full backtest", open_one)
+
+
+def _write_csvs() -> dict[str, Path]:
+    """Synthetic price files for the Analyze tests: an intraday file with Unix timestamps and two
+    daily files with day-first (DD-MM-YYYY) dates."""
+    import math
+    folder = OUT / "csvtest"
+    folder.mkdir(parents=True, exist_ok=True)
+    files = {}
+    # 5-minute bars, 09:15-15:25, weekdays, ~8 weeks
+    rows, px, k = ["timestamp,open,high,low,close,volume"], 500.0, 0
+    day = date(2026, 8, 3)
+    while day <= date(2026, 9, 25):
+        if day.weekday() < 5:
+            for m in range(9 * 60 + 15, 15 * 60 + 30, 5):
+                k += 1
+                o = px
+                px *= 1 + 0.0012 * math.sin(k * 0.37) + 0.0008 * math.cos(k * 1.91)
+                ts = int(time.mktime(time.strptime(f"{day} {m // 60:02d}:{m % 60:02d}", "%Y-%m-%d %H:%M")) - time.timezone)
+                rows.append(f"{ts},{o:.2f},{max(o, px) * 1.0006:.2f},{min(o, px) * 0.9994:.2f},{px:.2f},{1000 + (k * 37) % 900}")
+        day += timedelta(days=1)
+    files["intraday"] = folder / "e2e_intraday.csv"
+    files["intraday"].write_text("\n".join(rows))
+    for name, drift, seed in (("e2e_daily", 0.0006, 3), ("e2e_bench", 0.0003, 5)):
+        rows, px = ["Date,Open,High,Low,Close,Volume"], 100.0
+        days = [date(2022, 1, 3) + timedelta(days=i) for i in range(1100)]
+        for i, d in enumerate(d for d in days if d.weekday() < 5):
+            o = px
+            px *= 1 + drift + 0.012 * math.sin(i * 0.7 * seed) * math.cos(i * 0.13)
+            rows.append(f"{d:%d-%m-%Y},{o:.2f},{max(o, px) * 1.004:.2f},{min(o, px) * 0.996:.2f},{px:.2f},{10000 + (i * 7919) % 5000}")
+        files[name] = folder / f"{name}.csv"
+        files[name].write_text("\n".join(rows))
+    return files
+
+
+def analyze_tests(s: Suite):
+    ui = s.ui
+    print("\n[12] Analyze (your CSV data)")
+    files = _write_csvs()
+    ui.d.get(BASE + "/")
+    ui.js("Object.keys(localStorage).filter(k => k.startsWith('qf.chart.')).forEach(k => localStorage.removeItem(k));"
+          "localStorage.setItem('qf.chart.settings', JSON.stringify({symbol: 'NFLX', compare: ['AAPL'], panel: 'watchlist'}))")
+    for d in json.load(urllib.request.urlopen(f"{BASE}/api/data/uploads")):  # start from an empty dataset list
+        if d["name"].startswith("E2E_"):
+            urllib.request.urlopen(urllib.request.Request(f"{BASE}/api/data/uploads/{d['name']}", method="DELETE"))
+    ui.load("chart", CANON)
+    settings = lambda: json.loads(ui.js("return localStorage.getItem('qf.chart.settings')") or "{}")
+    doc = lambda: json.loads(ui.js("return localStorage.getItem('qf.chart.doc')") or '{"drawings": {}, "indicators": []}')
+    from selenium.webdriver.common.action_chains import ActionChains
+
+    def chart_click(x, y):
+        c = ui.el(".ct-chart")
+        r = c.rect
+        ActionChains(ui.d).move_to_element_with_offset(c, x - r["width"] / 2, y - r["height"] / 2).click().perform()
+        time.sleep(0.3)
+
+    def button(label):
+        ui.click(ui.el(f'button[aria-label="{label}"]'))
+        time.sleep(0.3)
+
+    def menu_item(text):
+        ui.click([b for b in ui.els(".ct-pop .ct-mi") if text in b.text][0])
+        time.sleep(0.3)
+
+    def legend_has(text, timeout=30):
+        ui.wait("document.querySelector('.ct-leg-title') && document.querySelector('.ct-leg-title').textContent.includes(%s)" % json.dumps(text), timeout, text)
+
+    def empty_state():
+        ui.wait("document.querySelector('.ct-welcome .ct-dropzone')", 15, "upload panel")
+        st = settings()
+        assert st.get("symbol") == "" and st.get("compare") == [], st
+        assert not ui.els('button[aria-label="Alert"]') and not ui.els(".ct-bidask"), "market features still shown"
+        tabs = [b.get_attribute("aria-label") for b in ui.els(".ct-strip button")]
+        assert tabs == ["Datasets", "Dataset details", "Data window", "Object tree"], tabs
+        return f"upload panel shown; old symbol NFLX dropped; panels {tabs}"
+    s.check("Analyze starts from your CSV data only", empty_state)
+
+    def upload_intraday():
+        ui.el(".ct-welcome input[type=file]").send_keys(str(files["intraday"]))
+        ui.wait("document.querySelector('.ct-symbol b')?.textContent === 'E2E_INTRADAY' && document.querySelector('.ct-ohlc') && !document.querySelector('.ct-overlay')", 40, "intraday chart")
+        legend_has("· 5 · CSV")
+        assert ui.canvases(".ct-chart") >= 2
+        button("Interval")
+        disabled = [b.text for b in ui.els(".ct-pop .ct-mi") if not b.is_enabled()]
+        assert len(disabled) == 2 and all("finer" in t for t in disabled), disabled
+        menu_item("1 hour")
+        legend_has("· 1h · CSV")
+        ui.click_text("1Y", ".ct-bottom button", exact=True)
+        legend_has("· 1D · CSV")
+        ui.click_text("5D", ".ct-bottom button", exact=True)
+        legend_has("· 5 · CSV")
+        return "5-minute file (Unix timestamps) -> 1h -> 1D -> back to 5m; 1m/2m disabled"
+    s.check("Upload an intraday CSV, change interval and range", upload_intraday)
+
+    def drawing():
+        ui.click(ui.el('.ct-tool[data-tool="trend"]'))
+        chart_click(250, 300); chart_click(650, 220)
+        key = "CSV:E2E_INTRADAY"
+        ui.wait("(JSON.parse(localStorage.getItem('qf.chart.doc') || '{}').drawings || {})['%s']?.length === 1" % key, 5, "trend line saved")
+        assert ui.el(".ct-float-name").text == "Trend line"
+        ActionChains(ui.d).send_keys(Keys.DELETE).perform()
+        ui.wait("document.querySelectorAll('.ct-float').length === 0", 5, "deleted")
+        ActionChains(ui.d).key_down(Keys.CONTROL).send_keys("z").key_up(Keys.CONTROL).perform()
+        ui.wait("(JSON.parse(localStorage.getItem('qf.chart.doc') || '{}').drawings || {})['%s']?.length === 1" % key, 5, "undo")
+        ui.click(ui.el(".ct-tg-more[aria-label='More Forecasting and measurement tools']"))
+        menu_item("Long position")
+        chart_click(700, 420); chart_click(900, 330)
+        ui.wait("document.querySelector('.ct-float-name')?.textContent === 'Long position'", 5, "long position")
+        assert any("Risk/reward" in t for t in ui.js("return [...document.querySelectorAll('svg.dl text')].map(t => t.textContent)"))
+        return f"{len(doc()['drawings'][key])} drawings: trend line (delete + undo), long position with risk/reward"
+    s.check("Draw, delete, undo and a long position", drawing)
+
+    def indicators():
+        button("Indicators")
+        for name in ("Relative Strength Index", "Bollinger Bands"):
+            ui.click([r for r in ui.els(".ct-ind-row") if ui.el("b", r).text == name][0])
+        ui.click(ui.el(".ct-modal .ct-x"))
+        ui.wait("document.querySelectorAll('.ct-legend.pane').length === 1", 10, "RSI pane")
+        names = ui.js("return [...document.querySelectorAll('.ct-leg-name')].map(e => e.textContent)")
+        assert "RSI 14 close" in names and any(n.startswith("BB 20") for n in names), names
+        rsi = [r for r in ui.els(".ct-leg-ind") if ui.el(".ct-leg-name", r).text.startswith("RSI")][0]
+        ui.js("arguments[0].querySelector('button[title=Settings]').click()", rsi)
+        ui.type_into(ui.el(".ct-modal input[type=number]"), 7)
+        ui.click_text("Ok", ".ct-modal button", exact=True)
+        ui.wait("[...document.querySelectorAll('.ct-leg-name')].some(e => e.textContent === 'RSI 7 close')", 5, "RSI 7")
+        button("Indicator templates")
+        menu_item("Momentum")
+        ui.wait("document.querySelectorAll('.ct-legend.pane').length === 2", 10, "template panes")
+        return " | ".join(ui.js("return [...document.querySelectorAll('.ct-leg-name')].map(e => e.textContent)"))
+    s.check("Indicators: add, edit inputs, template", indicators)
+
+    def chart_types():
+        seen = []
+        for label in ("Heikin Ashi", "Hollow candles", "Bars", "Line", "Area", "Baseline", "Columns", "Step line", "Candles"):
+            button("Chart type")
+            menu_item(label)
+            seen.append(settings()["type"])
+        assert seen[-1] == "candles" and len(set(seen)) == 9, seen
+        # Swapping the main series must not merge it into an indicator pane (price + RSI + MACD = 3 panes).
+        ui.wait("document.querySelector('.ct-chart').dataset.panes === '3'", 5, "three panes after chart type changes")
+        return ", ".join(seen) + " (panes intact)"
+    s.check("All nine chart types", chart_types)
+
+    def new_chart_types():
+        seen = {}
+        for label in ("Renko", "Line break", "Kagi", "Point & figure", "Range bars"):
+            if not ui.els(".ct-pop .ct-brick, .ct-pop .ct-mi"):  # price-based types keep the menu open
+                button("Chart type")
+            menu_item(label)
+            legend_has(label, 10)
+            seen[label] = ui.el(".ct-leg-title").text.split("·")[-1].strip()
+        ui.type_into(ui.els(".ct-brick input")[0], 5)
+        legend_has("Range bars 5", 10)
+        menu_item("Candles")
+        ui.wait("!document.querySelector('.ct-pop')", 5, "chart type menu closed")
+        button("Indicators")
+        ui.click([r for r in ui.els(".ct-ind-row") if ui.el("b", r).text.startswith("Volume Profile")][0])
+        ui.click(ui.el(".ct-modal .ct-x"))
+        ui.wait("document.querySelectorAll('.ct-vp rect').length > 10 && document.querySelector('.ct-vp-poc')", 10, "volume profile overlay")
+        return "; ".join(seen.values()) + "; custom box; volume profile drawn"
+    s.check("Renko, line break, Kagi, P&F, range bars and volume profile", new_chart_types)
+
+    def replay():
+        button("Replay")
+        chart_click(500, 350)
+        ui.wait("document.querySelector('.ct-replay button[aria-label=Play]')", 5, "replay controls")
+        before = ui.el(".ct-replay .ct-replay-msg").text
+        button("Forward"); button("Forward")
+        after = ui.el(".ct-replay .ct-replay-msg").text
+        assert before != after, (before, after)
+        button("Exit replay")
+        ui.wait("!document.querySelector('.ct-replay')", 5, "replay closed")
+        return f"{before} -> {after}"
+    s.check("Bar replay: start, step forward, exit", replay)
+
+    def layout_and_panels():
+        ui.js("window.prompt = () => 'E2E chart layout'")
+        ui.click(ui.el(".ct-layout-save"))
+        ui.wait("document.querySelector('.ct-layout-name b').textContent === 'E2E chart layout'", 10, "layout saved")
+        assert any(l["name"] == "E2E chart layout" for l in json.load(urllib.request.urlopen(f"{BASE}/api/layouts")))
+        button("Datasets")  # the dialog
+        ui.el(".ct-modal input[type=file]").send_keys(str(files["e2e_daily"]))
+        ui.wait("document.querySelector('.ct-symbol b')?.textContent === 'E2E_DAILY' && !document.querySelector('.ct-modal')", 30, "second dataset")
+        legend_has("· 1D · CSV")
+        ui.click(ui.el('.ct-strip button[aria-label="Datasets"]'))
+        names = [b.text for b in ui.els(".ct-panel .ct-search-row b")]
+        assert {"E2E_DAILY", "E2E_INTRADAY"} <= set(names), names
+        ui.click(ui.el('.ct-strip button[aria-label="Dataset details"]'))
+        ui.wait("document.querySelector('.ct-det-head small')?.textContent.includes('your CSV')", 10, "details")
+        ui.click(ui.el('.ct-strip button[aria-label="Data window"]'))
+        rows = len(ui.els(".ct-dw .ct-kv"))
+        ui.click(ui.el('.ct-strip button[aria-label="Object tree"]'))
+        ui.click(ui.el('.ct-strip button[aria-label="Object tree"]'))  # close the panel
+        return f"layout saved; datasets {names}; data window {rows} values"
+    s.check("Save a layout; datasets, details, data window panels", layout_and_panels)
+
+    def compare_and_weekly():
+        button("Interval")
+        disabled = [b.text for b in ui.els(".ct-pop .ct-mi") if not b.is_enabled()]
+        assert any("1 hour" in t for t in disabled) and not any("1 week" in t for t in disabled), disabled
+        menu_item("1 week")
+        legend_has("· 1W · CSV")
+        button("Datasets")
+        ui.el(".ct-modal input[type=file]").send_keys(str(files["e2e_bench"]))
+        ui.wait("document.querySelector('.ct-symbol b')?.textContent === 'E2E_BENCH' && !document.querySelector('.ct-modal')", 30, "bench dataset")
+        button("Datasets")
+        ui.click([r for r in ui.els(".ct-modal .ct-search-row") if "E2E_DAILY" in r.text][0])
+        ui.wait("document.querySelector('.ct-symbol b')?.textContent === 'E2E_DAILY'", 20, "back to daily")
+        button("Compare with another dataset")
+        offered = [b.text for b in ui.els(".ct-modal .ct-search-row b")]
+        assert "E2E_DAILY" not in offered and "E2E_BENCH" in offered, offered
+        ui.click([r for r in ui.els(".ct-modal .ct-search-row") if "E2E_BENCH" in r.text][0])
+        ui.wait("[...document.querySelectorAll('.ct-legend .ct-leg-ind b')].some(b => b.textContent === 'E2E_BENCH')", 20, "compare line")
+        return f"weekly resample; compare offers {offered}"
+    s.check("Day-first daily CSV: weekly resample and compare datasets", compare_and_weekly)
+
+    def analysis_view():
+        ui.nav("Quant analysis")
+        ui.wait("document.querySelectorAll('.an-kpi').length === 8", 40, "analysis KPIs")
+        sel = ui.el(".an-controls select")
+        opts = [o.text for o in sel.find_elements(By.TAG_NAME, "option")]
+        assert "E2E_BENCH" in opts and not any(o.startswith("^") for o in opts), opts
+        Select(sel).select_by_visible_text("E2E_BENCH")
+        ui.wait("[...document.querySelectorAll('.an-kpi span')].some(e => e.textContent.includes('E2E_BENCH'))", 20, "benchmark applied")
+        kpis = dict(tuple(k.text.split("\n")[:2]) for k in ui.els(".an-kpi"))
+        vol = float(kpis["VOLATILITY (ANN.)"].rstrip("%"))
+        assert 3 < vol < 80, kpis  # scrambled dates would show a huge volatility
+        ui.wait("document.querySelectorAll('.an-card canvas').length >= 7", 20, "analysis charts")
+        cards = [h.text for h in ui.els(".an-card h3")]
+        for want in ("Price and drawdown", "Return distribution", "Q-Q plot", "Monthly returns", "Rolling statistics", "Autocorrelation", "Volume profile", "Largest drawdowns"):
+            assert want in cards, (want, cards)
+        ui.click([b for b in ui.els(".an-seg button") if b.text == "Beta"][0])
+        ui.nav("Chart")
+        ui.wait("!document.querySelector('.ct-analysis')", 5, "back to chart")
+        return f"benchmark E2E_BENCH, vol {vol}%, {len(cards)} cards"
+    s.check("Analysis view with a dataset as benchmark", analysis_view)
+
+    def snapshot():
+        before = set(ui.downloads())
+        button("Take a snapshot")
+        end = time.time() + 10
+        while time.time() < end and not (set(ui.downloads()) - before):
+            time.sleep(0.2)
+        new = sorted(set(ui.downloads()) - before)
+        assert new and new[0].endswith(".png"), new
+        return new[0]
+    s.check("Take a snapshot", snapshot)
 
 
 # --------------------------------------------------------------------------- #
@@ -947,13 +1429,13 @@ def start_server() -> subprocess.Popen:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--headed", action="store_true")
-    ap.add_argument("--only", help="comma separated groups: shell,config,strategies,results,lab,optimize,data,history,intraday,mobile")
+    ap.add_argument("--only", help="comma separated groups: shell,config,strategies,results,lab,optimize,data,history,intraday,mobile,compare,analyze")
     args = ap.parse_args()
     shutil.rmtree(OUT, ignore_errors=True)
     DOWNLOADS.mkdir(parents=True)
     groups = {"shell": shell_tests, "config": config_tests, "strategies": strategy_matrix, "results": results_tests,
               "lab": lab_tests, "optimize": optimize_tests, "data": data_tests, "history": history_tests,
-              "intraday": intraday_rules_test, "mobile": mobile_test}
+              "intraday": intraday_rules_test, "mobile": mobile_test, "compare": compare_tests, "analyze": analyze_tests}
     chosen = args.only.split(",") if args.only else list(groups)
     server = None if os.environ.get("QF_URL") else start_server()
     ui = UI(args.headed)

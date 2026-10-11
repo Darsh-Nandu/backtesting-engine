@@ -10,8 +10,8 @@
   },
   "dependencies": {
     "@codemirror/lang-python": "^6.2.1",
+    "@fontsource-variable/figtree": "^5.3.0",
     "@fontsource/ibm-plex-mono": "^5.3.0",
-    "@fontsource/ibm-plex-sans": "^5.3.0",
     "@uiw/react-codemirror": "^4.25.12",
     "echarts": "^5.6.0",
     "lightweight-charts": "^5.2.1",

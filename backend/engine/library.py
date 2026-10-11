@@ -16,7 +16,9 @@ class BuyAndHold(Strategy):
     name = "Buy & Hold"
     category = "Baseline"
     long_only = True
-    description = "Buys on the first bar and holds until the end. The baseline every strategy should beat."
+    uses_default_exits = False  # a stop-loss would turn the baseline into something else
+    description = ("Buys on the first bar and holds until the end. The baseline every strategy should beat. "
+                   "Ignores the default stop-loss / take-profit so it stays a true buy & hold.")
     params = {}
 
     def next(self):
